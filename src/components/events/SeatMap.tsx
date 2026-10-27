@@ -54,9 +54,10 @@ export function SeatMap({ event, initialTakenSeats, initialWagon, departed }: Pr
     }
   }, [event._id]);
 
-  // Co ~10 s (tylko gdy karta jest widoczna) i od razu po powrocie na kartę.
+  // Od razu po wejściu (po „Wstecz” Next pokazuje zapamiętaną stronę), potem co ~10 s
+  // (tylko gdy karta jest widoczna) i od razu po powrocie na kartę.
   useEffect(() => {
-    setUpdatedAt(new Date());
+    void refresh();
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, REFRESH_INTERVAL_MS);
@@ -73,8 +74,9 @@ export function SeatMap({ event, initialTakenSeats, initialWagon, departed }: Pr
 
   function selectWagon(number: number) {
     setWagon(number);
-    // Wybrany wagon w URL, żeby odświeżenie strony go nie gubiło.
-    router.replace(`${pathname}?wagon=${number}`, { scroll: false });
+    // Wybrany wagon w URL, żeby odświeżenie strony go nie gubiło. replaceState zamiast
+    // router.replace: bez zapytania do serwera i ponownego renderowania strony.
+    window.history.replaceState(null, "", `${pathname}?wagon=${number}`);
   }
 
   function selectSeat(seatId: string) {
