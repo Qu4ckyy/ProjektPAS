@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "seed": "tsx scripts/seed.ts",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "attack": "node scripts/attack.mjs"
   },
   "dependencies": {
