@@ -1,11 +1,12 @@
 # PROMPTY.md — prompty dla agentów (Etap I, Pociąg)
 
-Kolejność:
-1. **Mateusz — Prompt M1 (szkielet)**. Merge do `master`. Dopiero wtedy Kamil i Eryk robią `git pull` i zaczynają.
-2. Równolegle: **Kamil — Prompt K**, **Eryk — Prompt E**, **Mateusz — Prompt M2 (frontend B + C)**.
-3. **Mateusz — Prompt M3 (spięcie, wdrożenie, atak)**, gdy PR-y Kamila i Eryka są gotowe.
+Kolejność i stan:
+1. ✅ **Mateusz — Prompt M1 (szkielet)** — PR #1.
+2. ✅ **Kamil — Prompt K** — PR #2. ✅ **Eryk — Prompt E** — PR #3.
+3. **Eryk — Prompt E2** (przycięcie `expiresAt` do odjazdu) i **Kamil — Prompt K2** (dwie drobne poprawki mapy) — małe, niezależne.
+4. **Mateusz — Prompt M2 (frontend B + C)**, potem **Prompt M3 (spięcie, wdrożenie, atak)**.
 
-Każdy wkleja swój prompt do Claude Code w katalogu repo. `CONTRACT.md` musi być w roocie repo (wchodzi w M1).
+Każdy wkleja swój prompt do Claude Code w katalogu repo, na świeżym `master` (`git checkout master && git pull`). Potrzebny `.env.local` z `MONGODB_URI` i własną `MONGODB_DB`, potem `npm run seed`.
 
 ---
 
@@ -46,38 +47,48 @@ Zanim zaczniesz, pokaż mi krótki plan. Małe commity (Conventional Commits). N
 ## Prompt M2 — Mateusz: frontend kart B i C + nazwa i logo
 
 ```
-Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG (Next.js 15 App Router + TypeScript + Tailwind). Jestem liderem. Oceniana jest przede wszystkim NIEZAWODNOŚĆ.
-W roocie repo jest CONTRACT.md — przeczytaj go w całości (szczególnie §3, §4, §5, §6, §7). Nie zmieniaj plików innych osób (§6) — jeśli coś trzeba zmienić poza moimi plikami, zatrzymaj się i napisz mi.
-Pracuj na branchu feature/card-bc-frontend. API rezerwacji robi Eryk — w szkielecie są zaślepki o kształtach z kontraktu, pracuj na nich.
+Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG (Next.js 15 App Router + TypeScript + Tailwind + MongoDB). Jestem liderem. Oceniana jest przede wszystkim NIEZAWODNOŚĆ.
+W roocie repo jest CONTRACT.md — przeczytaj go w całości (szczególnie §2, §3, §4, §5, §6, §7). Nie zmieniaj plików innych osób (§6) — jeśli coś trzeba zmienić poza moimi plikami, zatrzymaj się i napisz mi.
+Pracuj na branchu feature/card-bc-frontend (z aktualnego master). Backend jest już GOTOWY (karta A Kamila, karty B+C Eryka) — pracuj na prawdziwym API z lokalną bazą (.env.local, npm run seed).
+Obecne src/components/reservation/ReserveForm.tsx i ReservationView.tsx to zaślepki ze szkieletu — przepisz je.
 
 MOJE KARTY: B (rezerwacja) i C (zakup) — frontend. Komponenty w src/components/reservation/.
 
-0. NAZWA I LOGO: zaproponuj 3 nazwy firmy kolejowo-biletowej (krótkie, po polsku, łatwe do zapamiętania) i do każdej pomysł na logo. Poczekaj, aż wybiorę. Potem: logo jako inline SVG w src/components/brand/Logo.tsx, nazwa w layout.tsx, <title> i favicon. Spójna paleta w Tailwind.
+ZACHOWANIE API (sprawdzone, od Eryka):
+- Każdy błąd: { error, message }, message po polsku i nadaje się do pokazania użytkownikowi.
+- POST /api/reservations: 201 { reservationId (24 znaki hex, małe litery), expiresAt (ISO) }; 400 VALIDATION_ERROR (message mówi, które pole); 400 INVALID_SEAT; 404 EVENT_NOT_FOUND; 409 SEAT_TAKEN; 409 EVENT_DEPARTED. Uwaga: expiresAt może być krótsze niż TTL, jeśli pociąg odjeżdża wcześniej (§2).
+- POST /api/reservations/:id/purchase: 200 { code }; ponowny i równoległy zakup zwraca TEN SAM kod, więc ponowienie po błędzie sieci jest bezpieczne; 404 RESERVATION_NOT_FOUND; 410 RESERVATION_EXPIRED ("Rezerwacja wygasła, miejsce wróciło do puli.").
+- GET /api/reservations/:id: { reservationId, eventId, seatId, customerName, status ("held" | "purchased" | "expired"), expiresAt, serverNow, event } + code TYLKO przy "purchased". Bez e-maila.
+- GET /api/tickets/:code: { code, seatId, customerName, purchasedAt, event }, kod normalizowany (abcd-efgh też działa); 404 TICKET_NOT_FOUND.
+- Walidacja serwera (klient ma walidować TAK SAMO, żeby nie przepuszczać tego, co serwer odrzuci): wszystkie pola po trim; customerName 1–100 znaków, bez znaków sterujących (\n, \t, \0); email max 254, domena z kropką i literową końcówką (jan@localhost → błąd); dodatkowe pola są ignorowane.
+
+0. NAZWA I LOGO: zaproponuj 3 nazwy firmy kolejowo-biletowej (krótkie, po polsku, łatwe do zapamiętania) i do każdej pomysł na logo. Poczekaj, aż wybiorę. Potem: logo jako inline SVG w src/components/brand/Logo.tsx, nazwa w layout.tsx, <title> i favicon. Spójna paleta w Tailwind, pasująca do mapy wagonu Kamila (neutral + emerald + sky).
 
 1. /reserve?eventId=…&seatId=… — formularz rezerwacji:
-   - nagłówek: relacja, data i godzina odjazdu (format.ts), "Wagon 2, miejsce 14 · okno" (seats.ts); dane kursu z GET /api/events/:eventId (cache: "no-store"),
+   - nagłówek: relacja, data i godzina odjazdu (format.ts), "Wagon 2, miejsce 14 · okno" (seats.ts: seatLabel, parseSeatId, isWindow); dane kursu z GET /api/events/:eventId (cache: "no-store"),
    - brak/zły eventId lub seatId w URL, kurs nie istnieje, miejsce spoza kursu → czytelny komunikat + link do rozkładu, bez formularza,
+   - kurs już odjechał (hasDeparted z events.ts albo startsAt <= teraz) → komunikat + link do rozkładu, bez formularza,
    - miejsce już jest w takenSeats → komunikat "To miejsce jest już zajęte" + link do mapy,
-   - pola: imię i nazwisko (1–100), e-mail (max 254), walidacja po stronie klienta z komunikatami przy polach, <label>, autocomplete,
+   - pola: imię i nazwisko, e-mail; walidacja klienta zgodna z serwerem (patrz wyżej), komunikaty przy polach, <label>, autocomplete="name" / "email",
    - wysyłka: przycisk zablokowany w trakcie (brak podwójnego wysłania), POST /api/reservations,
    - 201 → router.push(`/reservations/${reservationId}`),
-   - 409 SEAT_TAKEN → "Ktoś był szybszy — to miejsce właśnie zajęto" + link do mapy; 409 EVENT_DEPARTED, 400, 404 → message z API; błąd sieci / 500 → "Coś poszło nie tak, spróbuj ponownie" (formularz zostaje wypełniony).
+   - 409 SEAT_TAKEN → "Ktoś był szybszy — to miejsce właśnie zajęto" + link do mapy (Z14); 409 EVENT_DEPARTED, 400, 404 → message z API; błąd sieci / 500 → "Coś poszło nie tak, spróbuj ponownie" (formularz zostaje wypełniony),
    - useSearchParams w <Suspense>.
 
 2. /reservations/[param]:
-   - param pasuje do ^[0-9a-f]{24}$ → GET /api/reservations/:id:
-     - status "held" → podsumowanie (relacja, odjazd, wagon i miejsce, imię) + licznik "Trzymamy Twoje miejsce jeszcze 14:32" + przycisk "Kupuję bilet",
-     - licznik: offset = serverNow - Date.now() w chwili pobrania; pozostało = expiresAt - (Date.now() + offset). NIE ufaj samemu zegarowi klienta (CONTRACT.md Z15). Ostatnia minuta wyróżniona. Przy 0 → stan "wygasła" bez przeładowania,
-     - "Kupuję bilet": przycisk zablokowany po kliknięciu, POST /api/reservations/:id/purchase → 200 → router.replace(`/reservations/${code}`); 410 → stan "wygasła"; 404 → "Nie znaleziono rezerwacji"; błąd sieci → komunikat i możliwość ponowienia (zakup jest idempotentny, więc ponowienie jest bezpieczne),
+   - param pasuje do RESERVATION_ID_REGEX z types.ts (^[0-9a-f]{24}$, bez flagi i) → GET /api/reservations/:id:
+     - status "held" → podsumowanie (relacja, data i godzina odjazdu, wagon i miejsce, imię) + licznik "Trzymamy Twoje miejsce jeszcze 14:32" + przycisk "Kupuję bilet",
+     - licznik: offset = serverNow - Date.now() w chwili pobrania; pozostało = expiresAt - (Date.now() + offset). NIE ufaj samemu zegarowi klienta (Z15). formatCountdown z format.ts. Ostatnia minuta wyróżniona. Przy 0 → stan "wygasła" bez przeładowania i przycisk zablokowany,
+     - "Kupuję bilet": przycisk zablokowany po kliknięciu, POST /api/reservations/:id/purchase → 200 → router.replace(`/reservations/${code}`); 410 → stan "wygasła"; 404 → "Nie znaleziono rezerwacji"; błąd sieci → komunikat i przycisk "Spróbuj ponownie" (zakup jest idempotentny),
      - status "purchased" → router.replace(`/reservations/${code}`),
-     - status "expired" → "Rezerwacja wygasła, miejsce wróciło do puli" + link do mapy kursu (/events/:eventId),
-   - param pasuje do formatu kodu (CONTRACT.md §2, porównaj po toUpperCase) → GET /api/tickets/:code → BILET: nazwa i logo firmy, numer pociągu, relacja, data, odjazd, przyjazd, wagon, miejsce (okno/korytarz), imię, duży kod. Przycisk "Drukuj" (window.print + style @media print),
-   - cokolwiek innego albo 404 → "Nie znaleziono rezerwacji ani biletu" + link do rozkładu.
-   - Stany ładowania na każdym ekranie.
+     - status "expired" → "Rezerwacja wygasła, miejsce wróciło do puli" + link do mapy kursu (/events/:eventId) — to wymóg z PDF-u CEO (karta C),
+   - param pasuje do formatu kodu (normalizuj: trim + toUpperCase, TICKET_CODE_REGEX z types.ts) → GET /api/tickets/:code → BILET: nazwa i logo firmy, numer pociągu, relacja, data, ODJAZD i przyjazd, wagon, miejsce (okno/korytarz), imię, duży kod. Przycisk "Drukuj" (window.print + style @media print),
+   - cokolwiek innego albo 404 → "Nie znaleziono rezerwacji ani biletu" + link do rozkładu,
+   - stany ładowania na każdym ekranie.
 
-3. Zasady: fetch zawsze z cache: "no-store"; nigdy dangerouslySetInnerHTML; parametry w URL przez encodeURIComponent; żadnych danych w localStorage; responsywnie (telefon); dostępność (label, aria-live dla licznika co minutę, nie co sekundę; focus po błędzie).
+3. Zasady: fetch zawsze z cache: "no-store"; nigdy dangerouslySetInnerHTML; parametry w URL przez encodeURIComponent; żadnych danych w localStorage; responsywnie (telefon); dostępność (label, aria-live dla licznika co minutę, nie co sekundę; focus na komunikacie po błędzie).
 
-DEFINICJA "GOTOWE": na zaślepkach i potem na prawdziwym API Eryka da się przejść: mapa → formularz → licznik → zakup → bilet; każdy błąd z kontraktu pokazuje sensowny komunikat (sprawdź ręcznie: podwójny klik, zajęte miejsce, wygaśnięcie z RESERVATION_TTL_SECONDS=30, zły kod w URL); npm run build i npm run lint bez błędów.
+DEFINICJA "GOTOWE": na prawdziwym API da się przejść: mapa → formularz → licznik → zakup → bilet; każdy błąd z kontraktu pokazuje sensowny komunikat. Sprawdź ręcznie: podwójny klik w "Rezerwuję" i "Kupuję bilet", zajęte miejsce (zarezerwuj je w drugiej karcie), wygaśnięcie z RESERVATION_TTL_SECONDS=30, zły kod w URL, jan@localhost w formularzu. npm run build, npm run lint i npm test bez błędów.
 Zanim zaczniesz, pokaż mi krótki plan. Małe commity (Conventional Commits), na koniec opis PR.
 ```
 
@@ -86,32 +97,35 @@ Zanim zaczniesz, pokaż mi krótki plan. Małe commity (Conventional Commits), n
 ## Prompt M3 — Mateusz: spięcie, wdrożenie i atak
 
 ```
-Jestem liderem zespołu w projekcie PAS S01 (system rezerwacji biletów na POCIĄG, Next.js 15 + MongoDB Atlas, wdrożenie na Vercel). Teraz spinam całość i sam atakuję system przed demem u CEO. Przeczytaj CONTRACT.md w całości, zwłaszcza §3, §4 i §7.
-Pracuj na branchu feature/attack.
+Jestem liderem zespołu w projekcie PAS S01 (system rezerwacji biletów na POCIĄG, Next.js 15 + MongoDB Atlas, wdrożenie na Vercel). Teraz spinam całość i sam atakuję system przed demem u CEO. Przeczytaj CONTRACT.md w całości, zwłaszcza §2, §3, §4 i §7.
+Pracuj na branchu feature/attack (z aktualnego master).
 
 1. scripts/attack.mjs (czysty Node 20+, bez zależności, globalny fetch). Użycie: `node scripts/attack.mjs <BASE_URL>` (domyślnie http://localhost:3000).
-   Każdy scenariusz to osobny test z wynikiem PASS/FAIL i krótkim powodem; na końcu tabelka i exit code 1, jeśli coś padło. Scenariusze (zmapowane na Z1–Z17 z §7):
+   Każdy scenariusz to osobny test z wynikiem PASS/FAIL i krótkim powodem; na końcu tabelka i exit code 1, jeśli coś padło. Scenariusze (zmapowane na zagrożenia z §7):
    - kontrakt: GET /api/events → 200 i tablica z polami z §2; GET /api/events/:id → { event, takenSeats },
-   - Z1: 50 równoległych POST /api/reservations na to samo wolne miejsce → dokładnie 1×201, reszta 409 SEAT_TAKEN, 0×500; potem miejsce jest w takenSeats,
-   - Z4: 10 równoległych purchase tej samej rezerwacji → same 200 i jeden identyczny kod; kod w formacie z §2; potem GET /api/tickets/:code → 200,
-   - Z5: kupione miejsce dalej jest w takenSeats,
-   - Z6: śmieciowe body: brak body, "nie-json", [], null, 123, {}, pola jako liczby/tablice/obiekty, {"eventId":{"$ne":null}}, customerName 10 000 znaków, zły e-mail, puste stringi po trim, body 1 MB → zawsze 400, nigdy 500,
-   - Z7: złe id: /api/events/nie-ma, /api/events/%7B%7D, id 5000 znaków, /api/reservations/abc/purchase, /api/reservations/aaaaaaaaaaaa/purchase, /api/tickets/<losowy kod> → 404, nigdy 500,
+   - Z1: 50 równoległych POST /api/reservations na to samo wolne miejsce → dokładnie 1×201, 49×409 SEAT_TAKEN, 0×500; potem miejsce jest w takenSeats,
+   - Z4: 10 równoległych purchase tej samej rezerwacji → 10×200 i jeden identyczny kod w formacie z §2; potem GET /api/tickets/:code (też małymi literami) → 200; GET /api/reservations/:id → status "purchased" i ten sam code,
+   - Z5: kupione miejsce dalej jest w takenSeats, a ponowna rezerwacja go → 409,
+   - Z6: śmieciowe body: brak body, "nie-json", [], null, 123, {}, pola jako liczby/tablice/obiekty, {"eventId":{"$ne":null}}, customerName 10 000 znaków, customerName ze znakiem \n, email "jan@localhost", puste stringi po trim, niepoprawne UTF-8, body 1 MB z Content-Length i bez (chunked) → zawsze 400 VALIDATION_ERROR, nigdy 500,
+   - Z7: złe id: /api/events/nie-ma, /api/events/%7B%7D, id 5000 znaków, /api/reservations/abc/purchase, /api/reservations/aaaaaaaaaaaa/purchase, 24 znaki hex WIELKIMI literami, /api/tickets/<losowy poprawny kod> → 404 JSON, nigdy 500.
+     Wyjątek (świadoma decyzja, CONTRACT.md §3): zepsute %-kodowanie (np. /api/reservations/%E0%A4%A/purchase) Next.js odrzuca przed handlerem — oczekuj 400 i NIE wymagaj JSON-a, tylko braku 500,
    - Z8: seatId "9-99" → 400 INVALID_SEAT,
-   - Z11: GET /api/reservations/:id nie zawiera pola email (szukaj też w całym tekście odpowiedzi),
+   - Z11: GET /api/reservations/:id i GET /api/tickets/:code nie zawierają e-maila (szukaj adresu w całym tekście odpowiedzi),
    - Z12: żadna odpowiedź błędu nie zawiera "at ", "Error:", "Mongo", ścieżek plików,
-   - format błędu: każde 4xx/5xx ma { error, message } jako stringi,
-   - Z2 + Z3 (opcjonalnie, flaga --slow): czekaj TTL+5 s (TTL podawany flagą --ttl, domyślnie 120) → miejsce wraca do puli, purchase → 410 RESERVATION_EXPIRED, ponowna rezerwacja tego miejsca → 201.
+   - format błędu: każde JSON-owe 4xx/5xx ma { error, message } jako stringi,
+   - Z2 + Z3 (flaga --slow): TTL = RESERVATION_TTL_SECONDS serwera, podawany flagą --ttl (domyślnie 120). Po TTL + 1 s (cron nie jest potrzebny): miejsce znika z takenSeats, purchase → 410 RESERVATION_EXPIRED, GET rezerwacji → status "expired", ponowna rezerwacja tego miejsca → 201.
    Skrypt zużywa miejsca — wypisz na starcie, który kurs i które miejsca bierze; wybieraj losowe wolne miejsca, nie zawsze te same.
-2. scripts/reset.ts (tsx): kasuje kolekcję reservations w bazie z MONGODB_DB i uruchamia seed. Wymaga flagi --yes i wypisuje nazwę bazy przed usunięciem. Odmawia, jeśli MONGODB_DB == "pociag" bez dodatkowej flagi --prod. Skrypt "reset" w package.json.
+2. scripts/reset.ts (tsx): czyści rezerwacje w bazie z MONGODB_DB przez deleteMany({}) — NIE drop(), bo drop() kasuje też indeksy, w tym unikalny indeks chroniący przed podwójną rezerwacją (Z1), a działający serwer zakłada je tylko raz na połączenie. Na koniec wywołaj ensureIndexes(db) z src/lib/db.ts (na wszelki wypadek) i seed kursów. Wymaga flagi --yes i wypisuje nazwę bazy oraz liczbę usuniętych rezerwacji. Odmawia, jeśli MONGODB_DB == "pociag" bez dodatkowej flagi --prod. Skrypt "reset" w package.json.
 3. Checklista wdrożenia (zapisz jako DEPLOY.md):
-   - kolejność merge: feature/card-a-events i feature/card-bc-reservations, potem feature/card-bc-frontend, potem feature/attack; po każdym merge npm run build, npm run lint, npm test,
-   - Vercel: zmienne MONGODB_URI, MONGODB_DB=pociag, RESERVATION_TTL_SECONDS=120 na demo; region fra1; Atlas Network Access 0.0.0.0/0 (Vercel nie ma stałego IP); po zmianie env → redeploy,
+   - kolejność merge: feature/card-bc-frontend, potem feature/attack; po każdym merge npm run build, npm run lint, npm test,
+   - Vercel: zmienne MONGODB_URI, MONGODB_DB=pociag, RESERVATION_TTL_SECONDS=120 na demo — dokładnie liczba całkowita 1–86400, inaczej serwer bierze 900 i loguje jeden warning; region fra1; Atlas Network Access 0.0.0.0/0 (Vercel nie ma stałego IP); po zmianie env → redeploy,
+   - indeksy zakłada samo pierwsze połączenie każdej instancji i npm run seed — w Atlasie nic ręcznie,
    - npm run seed na bazie produkcyjnej, potem attack na URL produkcyjny (najlepiej na preview z osobną bazą), potem reset przed demem,
+   - npm test na Atlasie (baza pociag_test) przynajmniej raz — dotąd testy szły tylko lokalnie,
    - curl-e kontraktu CEO do skopiowania (wszystkie endpointy z §3, z przykładowym _id kursu).
-4. DEMO.md — scenariusz demo na 5 minut: przejście klienta (rozkład → wagon → formularz → licznik → bilet), wygaśnięcie (TTL 120 s), pokaz attack.mjs na żywo, lista zagrożeń z §7 i jak każde obroniliśmy (jedno zdanie na zagrożenie).
+4. DEMO.md — scenariusz demo na 5 minut: przejście klienta (rozkład → wagon → formularz → licznik → bilet), wygaśnięcie (TTL 120 s), pokaz attack.mjs na żywo, lista zagrożeń z §7 i jak każde obroniliśmy (jedno zdanie na zagrożenie). Dopisz gotową odpowiedź na pytanie CEO o rozbieżność PDF-ów: POST /api/reservations zwraca { reservationId, expiresAt }, a kod daje osobny zakup (PDF Etapu I).
 
-DEFINICJA "GOTOWE": attack.mjs na lokalnym połączonym systemie i na Vercelu = same PASS (z --slow też); reset działa; DEPLOY.md i DEMO.md gotowe.
+DEFINICJA "GOTOWE": attack.mjs na lokalnym połączonym systemie i na Vercelu = same PASS (z --slow też); reset działa i po nim Z1 dalej daje dokładnie 1×201; DEPLOY.md i DEMO.md gotowe.
 Zanim zaczniesz, pokaż mi krótki plan. Jeśli attack.mjs znajdzie błąd w cudzym pliku — NIE poprawiaj go, tylko opisz: endpoint, wejście, oczekiwany i faktyczny wynik, plik winowajcy (do przekazania właścicielowi).
 ```
 
@@ -209,4 +223,32 @@ MOJE KARTY: B (rezerwacja) i C (zakup) — backend.
 
 DEFINICJA "GOTOWE": wszystkie testy zielone, npm run build i npm run lint bez błędów, curl-e z kontraktu CEO zwracają dokładnie wymagane kształty i kody HTTP.
 Zanim zaczniesz pisać kod, pokaż mi krótki plan. Małe commity (Conventional Commits), na koniec opis PR z listą zagrożeń z CONTRACT.md §7, które obsłużyłem, i jak to przetestować.
+```
+
+---
+
+## Prompt E2 — Eryk: przycięcie rezerwacji do odjazdu (Z21)
+
+```
+Projekt PAS S01 „Pociąg”. Przeczytaj CONTRACT.md — lider zmienił §2: expiresAt = min(createdAt + RESERVATION_TTL_SECONDS, new Date(event.startsAt)), nowe zagrożenie Z21 w §7.
+Pracuj na branchu fix/expires-at-departure (z aktualnego master). Zmieniaj tylko swoje pliki z §6.
+
+1. src/lib/reservations.ts → createReservation: expiresAt = min(createdAt + TTL, startsAt kursu). Kurs, który już odjechał, dalej daje 409 EVENT_DEPARTED (bez zmian).
+2. Testy: rezerwacja na kurs odjeżdżający za ~2 s przy TTL 900 → expiresAt == startsAt; po odjeździe purchase → 410 RESERVATION_EXPIRED, GET rezerwacji → status "expired", miejsce znika z takenSeats. Istniejące testy dalej zielone.
+3. src/lib/validation.ts: komentarz przy RESERVATION_ID_PATTERN mówi, że RESERVATION_ID_REGEX z types.ts ma flagę i — już nie ma (lider ją usunął). Popraw komentarz; możesz też używać RESERVATION_ID_REGEX zamiast własnej kopii.
+
+DEFINICJA "GOTOWE": npm test, npm run lint, npm run build zielone. Mały PR z opisem.
+```
+
+---
+
+## Prompt K2 — Kamil: dwie drobne poprawki mapy wagonu
+
+```
+Projekt PAS S01 „Pociąg”, karta A. Przeczytaj CONTRACT.md (§5, §7 Z13). Pracuj na branchu fix/seat-map-refresh (z aktualnego master). Zmieniaj tylko swoje pliki z §6.
+
+1. src/components/events/SeatMap.tsx: po powrocie na mapę przyciskiem „Wstecz” Next.js pokazuje zapamiętaną wersję strony, więc przez max 10 s zajętości mogą być nieaktualne. Pobierz takenSeats od razu po zamontowaniu komponentu (w tym samym efekcie co interwał), nie czekając 10 s.
+2. Zmiana wagonu: zamiast router.replace (wysyła zapytanie RSC i renderuje stronę na serwerze) użyj window.history.replaceState(null, "", `?wagon=${n}`) — Next 15 obsługuje to bez przeładowania. Odświeżenie strony ma dalej pamiętać wagon.
+
+DEFINICJA "GOTOWE": po „Wstecz” z /reserve mapa od razu robi GET /api/events/:id (sprawdź w zakładce Network); klik w zakładkę wagonu nie wysyła żądania do serwera; npm run build i npm run lint zielone. Mały PR z opisem.
 ```
