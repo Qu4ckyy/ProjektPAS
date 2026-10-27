@@ -1,49 +1,58 @@
-// STUB — implementuje Kamil (karta A: mapa wagonu).
+// Mapa wagonu — karta A. Właściciel: Kamil.
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getEvent } from "@/lib/events";
-import { formatDate, formatTime } from "@/lib/format";
+import { SeatMap } from "@/components/events/SeatMap";
+import { getEvent, hasDeparted } from "@/lib/events";
+import { formatDate, formatDuration, formatTime } from "@/lib/format";
 import { getTakenSeats } from "@/lib/reservations";
-import { parseSeatId } from "@/lib/seats";
 
 export const dynamic = "force-dynamic";
 
-export default async function EventPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+type Props = {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ wagon?: string | string[] }>;
+};
+
+export default async function EventPage({ params, searchParams }: Props) {
+  const [{ id }, { wagon }] = await Promise.all([params, searchParams]);
   const event = await getEvent(id);
   if (!event) notFound();
-  const taken = new Set(await getTakenSeats(event._id));
+
+  const takenSeats = await getTakenSeats(event._id);
+  const departed = hasDeparted(event);
+  const requestedWagon = Number(Array.isArray(wagon) ? wagon[0] : wagon);
+  const initialWagon = event.wagons.some((w) => w.number === requestedWagon)
+    ? requestedWagon
+    : (event.wagons[0]?.number ?? 1);
 
   return (
-    <div>
-      <h1 className="text-2xl font-bold">{event.title}</h1>
-      <p className="mb-4 text-neutral-600">
-        {formatDate(event.startsAt)} · {formatTime(event.startsAt)}–{formatTime(event.arrivesAt)}
-      </p>
-      {event.wagons.map((w) => (
-        <section key={w.number} className="mb-4">
-          <h2 className="mb-2 font-semibold">Wagon {w.number}</h2>
-          <div className="grid max-w-xs grid-cols-4 gap-2">
-            {event.seats
-              .filter((s) => parseSeatId(s)?.wagon === w.number)
-              .map((seatId) =>
-                taken.has(seatId) ? (
-                  <span key={seatId} className="rounded bg-neutral-300 p-2 text-center text-neutral-500">
-                    {parseSeatId(seatId)?.seat}
-                  </span>
-                ) : (
-                  <Link
-                    key={seatId}
-                    href={`/reserve?eventId=${encodeURIComponent(event._id)}&seatId=${encodeURIComponent(seatId)}`}
-                    className="rounded border p-2 text-center hover:bg-neutral-100"
-                  >
-                    {parseSeatId(seatId)?.seat}
-                  </Link>
-                ),
-              )}
-          </div>
-        </section>
-      ))}
+    <div className="space-y-6">
+      <Link href="/" className="text-sm text-neutral-600 hover:underline">
+        ← Rozkład jazdy
+      </Link>
+
+      <header>
+        <div className="mb-1 inline-block rounded bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-700">
+          {event.trainNumber}
+        </div>
+        <h1 className="text-2xl font-bold">
+          {event.from} → {event.to}
+        </h1>
+        <p className="mt-1 text-neutral-600">
+          {formatDate(event.startsAt)} · odjazd <strong>{formatTime(event.startsAt)}</strong> · przyjazd{" "}
+          <strong>{formatTime(event.arrivesAt)}</strong> · {formatDuration(event.startsAt, event.arrivesAt)}
+        </p>
+      </header>
+
+      {departed && (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          Ten pociąg już odjechał — mapa jest tylko do podglądu.
+        </div>
+      )}
+
+      <p className="text-sm text-neutral-600">Wybierz wolne miejsce, żeby je zarezerwować.</p>
+
+      <SeatMap event={event} initialTakenSeats={takenSeats} initialWagon={initialWagon} departed={departed} />
     </div>
   );
 }

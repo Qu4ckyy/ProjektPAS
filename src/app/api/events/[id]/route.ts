@@ -1,4 +1,4 @@
-// STUB — implementuje Kamil (CONTRACT.md §3: GET /api/events/:id).
+// GET /api/events/:id — CONTRACT.md §3. Właściciel: Kamil. takenSeats liczy Eryk (getTakenSeats).
 import { NextResponse } from "next/server";
 import { jsonError, withErrorHandling } from "@/lib/errors";
 import { getEvent } from "@/lib/events";
@@ -7,6 +7,8 @@ import type { EventDetailsResponse } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+const NO_STORE = { "Cache-Control": "no-store" };
+
 type Ctx = { params: Promise<{ id: string }> };
 
 export const GET = withErrorHandling("GET /api/events/:id", async (_req: Request, { params }: Ctx) => {
@@ -14,5 +16,5 @@ export const GET = withErrorHandling("GET /api/events/:id", async (_req: Request
   const event = await getEvent(id);
   if (!event) return jsonError(404, "EVENT_NOT_FOUND", "Nie ma takiego kursu.");
   const body: EventDetailsResponse = { event, takenSeats: await getTakenSeats(event._id) };
-  return NextResponse.json(body);
+  return NextResponse.json(body, { headers: NO_STORE });
 });
