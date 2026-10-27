@@ -63,10 +63,12 @@ type Reservation = {
   status: "held" | "purchased" | "expired";
   active: boolean;               // true = trzyma miejsce (held w trakcie albo purchased)
   createdAt: Date;
-  expiresAt: Date;               // createdAt + RESERVATION_TTL_SECONDS
+  expiresAt: Date;               // min(createdAt + RESERVATION_TTL_SECONDS, event.startsAt)
   purchasedAt?: Date;
 };
 ```
+
+- `expiresAt` nigdy nie wypada po odjeździe: `min(createdAt + TTL, new Date(event.startsAt))`. Rezerwacja zrobiona 5 minut przed odjazdem trzyma miejsce tylko 5 minut, więc zakup po odjeździe daje `410 RESERVATION_EXPIRED` (Z21). Bez nowego kodu błędu.
 
 Indeksy (tworzy `ensureIndexes()` w `src/lib/db.ts`):
 - UNIKALNY `{ eventId: 1, seatId: 1 }` z `partialFilterExpression: { active: true }` — **to jest ochrona przed podwójną rezerwacją**,
@@ -97,7 +99,9 @@ Wszystkie odpowiedzi to JSON. Daty w odpowiedziach to ISO stringi.
 Szczegóły:
 - `POST /api/reservations`: `customerName` po `trim` 1–100 znaków, `email` po `trim` max 254 i rozsądny regex, `eventId` i `seatId` max 100 znaków. Każde pole **musi** być stringiem (`typeof === "string"`), inaczej 400 — to blokuje NoSQL injection (`{"$ne": null}`). Body > 10 kB → 400.
 - `GET /api/reservations/:id`: `status` jest wyliczony (`held` z `expiresAt <= now` → `"expired"`). `code` tylko gdy `purchased`. `serverNow` pozwala frontendowi policzyć licznik niezależnie od zegara klienta. Bez e-maila.
-- Zły `:id` (nie 24 znaki hex, `%7B%7D`, bardzo długi) → `404`, nigdy `500`. Używaj regexu `^[0-9a-f]{24}$`, nie samego `ObjectId.isValid` (przepuszcza dowolne 12 znaków).
+- `POST /api/reservations`: zwrócone `expiresAt` może być krótsze niż TTL, jeśli pociąg odjeżdża wcześniej (§2).
+- Zły `:id` (nie 24 znaki hex, `%7B%7D`, bardzo długi) → `404`, nigdy `500`. Używaj regexu `^[0-9a-f]{24}$` (tylko małe litery, bez flagi `i`), nie samego `ObjectId.isValid` (przepuszcza dowolne 12 znaków).
+- Zepsute `%`-kodowanie w ścieżce (np. `/api/reservations/%E0%A4%A/purchase`) Next.js odrzuca przed handlerem: `400` jako strona HTML, nie JSON. Świadomie zostawiamy (to nie 500, a middleware to dodatkowe ryzyko).
 
 ## §4. Format błędów
 
@@ -174,5 +178,6 @@ Git: branch na kartę, PR do `master`, review robi lider. Conventional Commits (
 | Z16 | XSS przez `customerName` | React escapuje; zakaz `dangerouslySetInnerHTML` | wszyscy |
 | Z17 | Zła wartość `RESERVATION_TTL_SECONDS` | walidacja w `config.ts`, domyślnie 900 + warning | Eryk |
 | Z18 | Burza połączeń do Mongo na Vercelu | jeden `MongoClient` trzymany w `globalThis` | Mateusz (szkielet) |
-| Z19 | Atak CEO wyczerpie miejsca przed demem | `scripts/reset.ts` czyści rezerwacje w wybranej bazie | Mateusz |
+| Z19 | Atak CEO wyczerpie miejsca przed demem | `scripts/reset.ts` czyści rezerwacje przez `deleteMany({})` — nie `drop()`, bo to kasuje indeksy (Z1) | Mateusz |
 | Z20 | Godziny w złej strefie | wyświetlanie w `Europe/Warsaw`, w bazie UTC | Kamil + Mateusz |
+| Z21 | Zakup biletu po odjeździe pociągu (rezerwacja tuż przed odjazdem) | `expiresAt` przycięte do `startsAt` (§2) → zakup po odjeździe daje 410 | Eryk |
