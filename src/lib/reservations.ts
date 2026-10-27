@@ -115,7 +115,10 @@ export async function createReservation(input: CreateReservationBody): Promise<C
   // Druga próba tylko wtedy, gdy blokująca rezerwacja wygasła między releaseExpired a insertem.
   for (let attempt = 0; attempt < 2; attempt++) {
     const createdAt = new Date();
-    const expiresAt = new Date(createdAt.getTime() + getReservationTtlSeconds() * 1000);
+    // Nie dłużej niż do odjazdu (CONTRACT.md §2, Z21) — po odjeździe zakup daje 410.
+    const expiresAt = new Date(
+      Math.min(createdAt.getTime() + getReservationTtlSeconds() * 1000, new Date(event.startsAt).getTime()),
+    );
     const doc: Reservation = {
       _id: new ObjectId(),
       eventId: event._id,

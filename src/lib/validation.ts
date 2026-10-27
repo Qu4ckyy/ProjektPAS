@@ -31,7 +31,7 @@ const CONTROL_CHARS = /\p{Cc}/u;
 
 /**
  * reservationId: dokładnie 24 znaki hex, małe litery — CONTRACT.md §3.
- * Nie ObjectId.isValid (przepuszcza dowolne 12 znaków) i nie RESERVATION_ID_REGEX z types.ts (ma flagę i).
+ * Nie ObjectId.isValid (przepuszcza dowolne 12 znaków). Ten sam wzorzec co RESERVATION_ID_REGEX w types.ts.
  */
 const RESERVATION_ID_PATTERN = /^[0-9a-f]{24}$/;
 
