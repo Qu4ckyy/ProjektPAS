@@ -5,6 +5,8 @@ import { getEvents } from "@/lib/events";
 
 export const dynamic = "force-dynamic";
 
+const NO_STORE = { "Cache-Control": "no-store" };
+
 export const GET = withErrorHandling("GET /api/events", async () => {
-  return NextResponse.json(await getEvents());
+  return NextResponse.json(await getEvents(), { headers: NO_STORE });
 });
