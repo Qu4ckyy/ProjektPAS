@@ -68,8 +68,8 @@ export type TicketResponse = {
 
 // --- Formaty identyfikatorów (§2, §3) ---
 
-/** reservationId: 24 znaki hex. Nie używaj samego ObjectId.isValid. */
-export const RESERVATION_ID_REGEX = /^[0-9a-f]{24}$/i;
+/** reservationId: 24 znaki hex, małe litery (jak zwraca API). Nie używaj samego ObjectId.isValid. */
+export const RESERVATION_ID_REGEX = /^[0-9a-f]{24}$/;
 
 /** Kod biletu XXXX-XXXX z alfabetu bez 0, 1, I, O. */
 export const TICKET_CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
