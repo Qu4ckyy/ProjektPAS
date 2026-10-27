@@ -1,12 +1,12 @@
 import { formatDate, formatDuration, formatTime } from "@/lib/format";
-import { isWindow, parseSeatId } from "@/lib/seats";
+import { isWindow, parseSeatId, seatLabel } from "@/lib/seats";
 import type { TrainEvent } from "@/lib/types";
 
 /** "Wagon 2, miejsce 14 · przy oknie" */
 export function seatDescription(seatId: string): string {
   const parsed = parseSeatId(seatId);
   if (!parsed) return seatId;
-  return `Wagon ${parsed.wagon}, miejsce ${parsed.seat} · ${isWindow(parsed.seat) ? "przy oknie" : "przy korytarzu"}`;
+  return `${seatLabel(seatId)} · ${isWindow(parsed.seat) ? "przy oknie" : "przy korytarzu"}`;
 }
 
 /** Relacja, data, odjazd/przyjazd i miejsce — nagłówek formularza i rezerwacji. */
