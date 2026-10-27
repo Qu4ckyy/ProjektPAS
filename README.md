@@ -9,10 +9,14 @@ System rezerwacji miejsc w pociągach. Next.js 15 (App Router) + TypeScript + Ta
 ```bash
 npm install
 cp .env.example .env.local   # uzupełnij MONGODB_URI i swoją MONGODB_DB
+npm run seed                 # kursy do kolekcji events (bezpiecznie puszczać wiele razy)
 npm run dev                  # http://localhost:3000
 ```
 
-Szkielet działa bez `.env.local` — zaślepki nie dotykają bazy. Baza jest potrzebna dopiero, gdy wejdą prawdziwe implementacje.
+Aplikacja wymaga bazy: bez `MONGODB_URI` w `.env.local` rozkład jazdy, mapa i całe API rezerwacji zwracają błąd.
+Indeksy kolekcji `reservations` zakłada samo pierwsze połączenie (i `npm run seed`), więc w Atlasie nie trzeba nic robić ręcznie.
+
+`npm test` też potrzebuje `MONGODB_URI` w `.env.local`, ale zawsze sam przełącza się na bazę `pociag_test` i ją czyści, więc nie rusza Twoich danych.
 
 | Skrypt | Co robi |
 |---|---|
@@ -32,7 +36,7 @@ Szkielet działa bez `.env.local` — zaślepki nie dotykają bazy. Baza jest po
 | Eryk | B + C backend: rezerwacja, zakup, wygasanie, testy | `feature/card-bc-reservations` |
 
 Pliki i ich właściciele: CONTRACT.md §6. Edytujesz tylko swoje — zmiana w cudzym pliku idzie przez lidera.
-Pliki-zaślepki mają na górze komentarz `// STUB — implementuje <Imię>`.
+Pliki, które są jeszcze zaślepkami, mają na górze komentarz `// STUB — implementuje <Imię>`.
 
 ## Zasady
 
