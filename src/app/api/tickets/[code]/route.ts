@@ -1,16 +1,21 @@
-// STUB — implementuje Eryk (CONTRACT.md §3: GET /api/tickets/:code).
+// GET /api/tickets/:code — CONTRACT.md §3. Właściciel: Eryk. Tylko kupione bilety, bez e-maila (Z11).
 import { NextResponse } from "next/server";
 import { jsonError, withErrorHandling } from "@/lib/errors";
-import { getTicketByCode } from "@/lib/reservations";
-import { TICKET_CODE_REGEX } from "@/lib/types";
+import { getTicketByCode, RESERVATION_ERRORS } from "@/lib/reservations";
 
 export const dynamic = "force-dynamic";
+
+const NO_STORE = { "Cache-Control": "no-store" };
 
 type Ctx = { params: Promise<{ code: string }> };
 
 export const GET = withErrorHandling("GET /api/tickets/:code", async (_req: Request, { params }: Ctx) => {
-  const code = (await params).code.trim().toUpperCase();
-  const ticket = TICKET_CODE_REGEX.test(code) ? await getTicketByCode(code) : null;
-  if (!ticket) return jsonError(404, "TICKET_NOT_FOUND", "Nie znaleziono biletu.");
-  return NextResponse.json(ticket);
+  const { code } = await params;
+  // Kod normalizowany (trim, wielkie litery) i sprawdzany formatem przed zapytaniem (Z7, Z10).
+  const ticket = await getTicketByCode(code);
+  if (!ticket) {
+    const { status, message } = RESERVATION_ERRORS.TICKET_NOT_FOUND;
+    return jsonError(status, "TICKET_NOT_FOUND", message);
+  }
+  return NextResponse.json(ticket, { headers: NO_STORE });
 });
