@@ -2,7 +2,7 @@
 
 System rezerwacji miejsc w pociągach. Next.js 15 (App Router) + TypeScript + Tailwind + MongoDB Atlas, wdrożenie na Vercel.
 
-**Źródło prawdy: [CONTRACT.md](CONTRACT.md).** Prompty dla agentów: [PROMPTY.md](PROMPTY.md).
+**Źródło prawdy: [CONTRACT.md](CONTRACT.md).** Prompty dla agentów: [PROMPTY.md](PROMPTY.md). Wdrożenie: [DEPLOY.md](DEPLOY.md). Demo: [DEMO.md](DEMO.md).
 
 ## Uruchomienie
 
@@ -25,7 +25,8 @@ Indeksy kolekcji `reservations` zakłada samo pierwsze połączenie (i `npm run 
 | `npm run lint` | ESLint |
 | `npm run seed` | wgrywa kursy do kolekcji `events` (Kamil) |
 | `npm test` | testy vitest (Eryk), na bazie `pociag_test` |
-| `npm run attack` | atak na API wg CONTRACT.md §7 (Mateusz) |
+| `npm run attack -- <URL> [--slow --ttl 120]` | atak na API wg CONTRACT.md §7 (Mateusz) |
+| `npm run reset -- --yes` | czyści rezerwacje i wgrywa kursy od nowa (`--prod` dla bazy `pociag`) |
 
 ## Kto co robi
 
