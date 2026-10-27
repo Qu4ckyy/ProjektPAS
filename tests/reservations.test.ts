@@ -215,6 +215,50 @@ describe("purchaseReservation", () => {
   });
 });
 
+describe("Z21: rezerwacja nie trwa dłużej niż do odjazdu", () => {
+  const SOON_EVENT_ID = "test-departs-soon";
+
+  async function insertEventDepartingIn(ms: number) {
+    const startsAt = new Date(Date.now() + ms).toISOString();
+    const event = { ...FUTURE_EVENT, _id: SOON_EVENT_ID, startsAt };
+    await (await getDb()).collection<typeof event>("events").replaceOne({ _id: SOON_EVENT_ID }, event, { upsert: true });
+    return event;
+  }
+
+  afterAll(async () => {
+    await (await getDb()).collection<{ _id: string }>("events").deleteOne({ _id: SOON_EVENT_ID });
+  });
+
+  it("kurs dalej niż TTL → expiresAt = createdAt + TTL (bez zmian)", async () => {
+    const before = Date.now();
+    const result = await createReservation(input({ seatId: "1-3" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.expiresAt.getTime()).toBeGreaterThanOrEqual(before + 60_000);
+    expect(result.expiresAt.getTime()).toBeLessThan(new Date(FUTURE_EVENT.startsAt).getTime());
+  });
+
+  it("odjazd przed końcem TTL → expiresAt = startsAt; po odjeździe zakup → 410, miejsce wolne", async () => {
+    setTtl(900);
+    const event = await insertEventDepartingIn(SHORT_TTL_SECONDS * 1000);
+    const result = await createReservation(input({ eventId: SOON_EVENT_ID, seatId: "1-4" }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.expiresAt.toISOString()).toBe(event.startsAt);
+    expect(await getTakenSeats(SOON_EVENT_ID)).toContain("1-4");
+
+    await waitForExpiry();
+    expect(await purchaseReservation(result.reservationId)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
+    expect((await getReservation(result.reservationId))?.status).toBe("expired");
+    expect(await getTakenSeats(SOON_EVENT_ID)).not.toContain("1-4");
+    // Po odjeździe nowej rezerwacji już się nie zrobi.
+    expect(await createReservation(input({ eventId: SOON_EVENT_ID, seatId: "1-4" }))).toEqual({
+      ok: false,
+      error: "EVENT_DEPARTED",
+    });
+  });
+});
+
 describe("Z5: kupione miejsce nigdy nie wraca do puli", () => {
   it("po TTL i po releaseExpired dalej zajęte, a ponowna rezerwacja → SEAT_TAKEN", async () => {
     setTtl(SHORT_TTL_SECONDS);

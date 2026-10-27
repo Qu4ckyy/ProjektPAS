@@ -9,7 +9,8 @@
     "lint": "eslint",
     "seed": "tsx scripts/seed.ts",
     "test": "vitest run --passWithNoTests",
-    "attack": "node scripts/attack.mjs"
+    "attack": "node scripts/attack.mjs",
+    "reset": "tsx scripts/reset.ts"
   },
   "dependencies": {
     "mongodb": "^6.21.0",
