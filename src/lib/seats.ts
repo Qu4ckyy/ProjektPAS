@@ -49,6 +49,15 @@ export function wagonRows(wagon: Wagon): [number[], number[]][] {
   return rows;
 }
 
+/** "1 wolne miejsce", "3 wolne miejsca", "12 wolnych miejsc". */
+export function freeSeatsLabel(n: number): string {
+  if (n === 1) return "1 wolne miejsce";
+  const lastDigit = n % 10;
+  const lastTwo = n % 100;
+  const few = lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14);
+  return few ? `${n} wolne miejsca` : `${n} wolnych miejsc`;
+}
+
 /** Liczba wolnych miejsc w wagonie (albo w całym kursie, gdy wagon nie podany). */
 export function countFree(seats: string[], takenSeats: Iterable<string>, wagon?: number): number {
   const taken = new Set(takenSeats);
