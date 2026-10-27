@@ -1,4 +1,4 @@
-// STUB — implementuje Kamil (CONTRACT.md §3: GET /api/events).
+// GET /api/events — CONTRACT.md §3. Właściciel: Kamil.
 import { NextResponse } from "next/server";
 import { withErrorHandling } from "@/lib/errors";
 import { getEvents } from "@/lib/events";

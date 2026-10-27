@@ -1,4 +1,4 @@
-// STUB — implementuje Kamil (dane przykładowe, CONTRACT.md §2).
+// Dane przykładowe: 3 kursy, 2 wagony × 20 miejsc (CONTRACT.md §2). Właściciel: Kamil. Wgrywa je npm run seed.
 import type { TrainEvent, Wagon } from "@/lib/types";
 
 const WAGONS: Wagon[] = [

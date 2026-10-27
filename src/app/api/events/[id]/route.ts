@@ -1,4 +1,4 @@
-// STUB — implementuje Kamil (CONTRACT.md §3: GET /api/events/:id).
+// GET /api/events/:id — CONTRACT.md §3. Właściciel: Kamil. takenSeats liczy Eryk (getTakenSeats).
 import { NextResponse } from "next/server";
 import { jsonError, withErrorHandling } from "@/lib/errors";
 import { getEvent } from "@/lib/events";
