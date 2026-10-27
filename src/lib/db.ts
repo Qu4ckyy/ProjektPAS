@@ -43,9 +43,33 @@ function ensureIndexesOnce(db: Db): Promise<void> {
   return cache.indexes;
 }
 
-// STUB — implementuje Eryk (CONTRACT.md §2: indeksy kolekcji reservations).
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function ensureIndexes(db: Db): Promise<void> {}
+export const RESERVATIONS_COLLECTION = "reservations";
+
+/**
+ * Indeksy kolekcji reservations — CONTRACT.md §2. Idempotentne (createIndexes z tymi samymi
+ * opcjami nic nie zmienia). Woła je getDb() raz na połączenie, przed pierwszym zapytaniem.
+ * Uwaga: drop() kolekcji usuwa też indeksy — do czyszczenia używaj deleteMany({}).
+ */
+export async function ensureIndexes(db: Db): Promise<void> {
+  await db.collection(RESERVATIONS_COLLECTION).createIndexes([
+    // Ochrona przed podwójną rezerwacją (Z1): jedno aktywne miejsce na kurs.
+    {
+      key: { eventId: 1, seatId: 1 },
+      name: "uniq_active_seat",
+      unique: true,
+      partialFilterExpression: { active: true },
+    },
+    // Kody biletów unikalne; rezerwacje bez kodu (null) nie wchodzą do indeksu.
+    {
+      key: { code: 1 },
+      name: "uniq_code",
+      unique: true,
+      partialFilterExpression: { code: { $type: "string" } },
+    },
+    // takenSeats i releaseExpired dla kursu.
+    { key: { eventId: 1, active: 1 }, name: "event_active" },
+  ]);
+}
 
 /** Do skryptów (seed, reset, testy) — zamyka połączenie, żeby proces mógł się zakończyć. */
 export async function closeDb(): Promise<void> {
