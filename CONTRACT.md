@@ -135,6 +135,7 @@ Przepływ (dane przekazujemy **tylko przez URL**, bez localStorage):
 ## §6. Właściciele plików
 
 Edytujesz tylko swoje pliki. Zmiana w cudzym pliku = wiadomość do lidera.
+Wyjątek: po zmergowaniu karty drobne poprawki z przeglądu w jej plikach robi lider (Etap I: `SeatMap.tsx` w M2, `reservations.ts`, `validation.ts` i `tests/` w M3). Właściciel pliku się nie zmienia.
 
 | Osoba | Pliki |
 |---|---|
@@ -180,4 +181,4 @@ Git: branch na kartę, PR do `master`, review robi lider. Conventional Commits (
 | Z18 | Burza połączeń do Mongo na Vercelu | jeden `MongoClient` trzymany w `globalThis` | Mateusz (szkielet) |
 | Z19 | Atak CEO wyczerpie miejsca przed demem | `scripts/reset.ts` czyści rezerwacje przez `deleteMany({})` — nie `drop()`, bo to kasuje indeksy (Z1) | Mateusz |
 | Z20 | Godziny w złej strefie | wyświetlanie w `Europe/Warsaw`, w bazie UTC | Kamil + Mateusz |
-| Z21 | Zakup biletu po odjeździe pociągu (rezerwacja tuż przed odjazdem) | `expiresAt` przycięte do `startsAt` (§2) → zakup po odjeździe daje 410 | Eryk |
+| Z21 | Zakup biletu po odjeździe pociągu (rezerwacja tuż przed odjazdem) | `expiresAt` przycięte do `startsAt` (§2) → zakup po odjeździe daje 410 | Mateusz (w pliku Eryka, M3) |

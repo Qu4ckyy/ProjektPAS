@@ -3,8 +3,9 @@
 Kolejność i stan:
 1. ✅ **Mateusz — Prompt M1 (szkielet)** — PR #1.
 2. ✅ **Kamil — Prompt K** — PR #2. ✅ **Eryk — Prompt E** — PR #3.
-3. **Eryk — Prompt E2** (przycięcie `expiresAt` do odjazdu) i **Kamil — Prompt K2** (dwie drobne poprawki mapy) — małe, niezależne.
-4. **Mateusz — Prompt M2 (frontend B + C)**, potem **Prompt M3 (spięcie, wdrożenie, atak)**.
+3. **Mateusz — Prompt M2 (frontend B + C + poprawki mapy Kamila)**, potem **Prompt M3 (poprawka backendu Eryka, spięcie, wdrożenie, atak)**.
+
+Kamil i Eryk mają po jednym prompcie i już skończyli. Drobne poprawki w ich plikach po przeglądzie robi lider w M2 i M3 (CONTRACT.md §6, wyjątek dla lidera).
 
 Każdy wkleja swój prompt do Claude Code w katalogu repo, na świeżym `master` (`git checkout master && git pull`). Potrzebny `.env.local` z `MONGODB_URI` i własną `MONGODB_DB`, potem `npm run seed`.
 
@@ -44,13 +45,14 @@ Zanim zaczniesz, pokaż mi krótki plan. Małe commity (Conventional Commits). N
 
 ---
 
-## Prompt M2 — Mateusz: frontend kart B i C + nazwa i logo
+## Prompt M2 — Mateusz: frontend kart B i C, nazwa i logo, poprawki mapy
 
 ```
 Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG (Next.js 15 App Router + TypeScript + Tailwind + MongoDB). Jestem liderem. Oceniana jest przede wszystkim NIEZAWODNOŚĆ.
 W roocie repo jest CONTRACT.md — przeczytaj go w całości (szczególnie §2, §3, §4, §5, §6, §7). Nie zmieniaj plików innych osób (§6) — jeśli coś trzeba zmienić poza moimi plikami, zatrzymaj się i napisz mi.
 Pracuj na branchu feature/card-bc-frontend (z aktualnego master). Backend jest już GOTOWY (karta A Kamila, karty B+C Eryka) — pracuj na prawdziwym API z lokalną bazą (.env.local, npm run seed).
 Obecne src/components/reservation/ReserveForm.tsx i ReservationView.tsx to zaślepki ze szkieletu — przepisz je.
+WYJĄTEK OD §6 (zgoda lidera, czyli moja): w punkcie 4 wolno Ci zmienić src/components/events/SeatMap.tsx (plik Kamila). Poza tym plikiem cudzych plików nie ruszaj.
 
 MOJE KARTY: B (rezerwacja) i C (zakup) — frontend. Komponenty w src/components/reservation/.
 
@@ -88,17 +90,27 @@ ZACHOWANIE API (sprawdzone, od Eryka):
 
 3. Zasady: fetch zawsze z cache: "no-store"; nigdy dangerouslySetInnerHTML; parametry w URL przez encodeURIComponent; żadnych danych w localStorage; responsywnie (telefon); dostępność (label, aria-live dla licznika co minutę, nie co sekundę; focus na komunikacie po błędzie).
 
-DEFINICJA "GOTOWE": na prawdziwym API da się przejść: mapa → formularz → licznik → zakup → bilet; każdy błąd z kontraktu pokazuje sensowny komunikat. Sprawdź ręcznie: podwójny klik w "Rezerwuję" i "Kupuję bilet", zajęte miejsce (zarezerwuj je w drugiej karcie), wygaśnięcie z RESERVATION_TTL_SECONDS=30, zły kod w URL, jan@localhost w formularzu. npm run build, npm run lint i npm test bez błędów.
+4. POPRAWKI MAPY WAGONU (z przeglądu karty A, osobny commit `fix(events): …`), tylko w src/components/events/SeatMap.tsx:
+   - po powrocie na mapę przyciskiem „Wstecz” (np. z /reserve po SEAT_TAKEN) Next.js pokazuje zapamiętaną wersję strony, więc przez max 10 s zajętości mogą być nieaktualne (Z13). Pobierz takenSeats od razu po zamontowaniu komponentu (w tym samym efekcie co interwał), nie czekając 10 s,
+   - zmiana wagonu: zamiast router.replace (wysyła zapytanie RSC i renderuje stronę na serwerze) użyj window.history.replaceState(null, "", `?wagon=${n}`) — Next 15 obsługuje to bez przeładowania. Odświeżenie strony ma dalej pamiętać wagon.
+
+DEFINICJA "GOTOWE": na prawdziwym API da się przejść: mapa → formularz → licznik → zakup → bilet; każdy błąd z kontraktu pokazuje sensowny komunikat. Sprawdź ręcznie: podwójny klik w "Rezerwuję" i "Kupuję bilet", zajęte miejsce (zarezerwuj je w drugiej karcie), wygaśnięcie z RESERVATION_TTL_SECONDS=30, zły kod w URL, jan@localhost w formularzu. Mapa: po „Wstecz” z /reserve od razu leci GET /api/events/:id (zakładka Network), a klik w zakładkę wagonu nie wysyła żądania do serwera. npm run build, npm run lint i npm test bez błędów.
 Zanim zaczniesz, pokaż mi krótki plan. Małe commity (Conventional Commits), na koniec opis PR.
 ```
 
 ---
 
-## Prompt M3 — Mateusz: spięcie, wdrożenie i atak
+## Prompt M3 — Mateusz: poprawka backendu, spięcie, wdrożenie i atak
 
 ```
 Jestem liderem zespołu w projekcie PAS S01 (system rezerwacji biletów na POCIĄG, Next.js 15 + MongoDB Atlas, wdrożenie na Vercel). Teraz spinam całość i sam atakuję system przed demem u CEO. Przeczytaj CONTRACT.md w całości, zwłaszcza §2, §3, §4 i §7.
 Pracuj na branchu feature/attack (z aktualnego master).
+WYJĄTEK OD §6 (zgoda lidera, czyli moja): w punkcie 0 wolno Ci zmienić src/lib/reservations.ts, src/lib/validation.ts i dopisać testy w tests/ (pliki Eryka). Poza punktem 0 cudzych plików nie ruszaj.
+
+0. POPRAWKA BACKENDU (z przeglądu kart B+C, osobny commit `fix(reservations): …`, zrób ją PRZED atakiem):
+   - CONTRACT.md §2 i Z21: expiresAt = min(createdAt + RESERVATION_TTL_SECONDS, new Date(event.startsAt)). Zmień createReservation w src/lib/reservations.ts. Kurs, który już odjechał, dalej daje 409 EVENT_DEPARTED (bez zmian),
+   - testy w tests/ (wzoruj się na istniejących, baza pociag_test): rezerwacja na kurs odjeżdżający za ~2 s przy TTL 900 → expiresAt == startsAt; po odjeździe purchase → 410 RESERVATION_EXPIRED, GET rezerwacji → status "expired", miejsce znika z takenSeats. Wszystkie istniejące testy (238) dalej zielone,
+   - src/lib/validation.ts: komentarz przy RESERVATION_ID_PATTERN mówi, że RESERVATION_ID_REGEX z types.ts ma flagę i — już nie ma. Popraw komentarz.
 
 1. scripts/attack.mjs (czysty Node 20+, bez zależności, globalny fetch). Użycie: `node scripts/attack.mjs <BASE_URL>` (domyślnie http://localhost:3000).
    Każdy scenariusz to osobny test z wynikiem PASS/FAIL i krótkim powodem; na końcu tabelka i exit code 1, jeśli coś padło. Scenariusze (zmapowane na zagrożenia z §7):
@@ -110,6 +122,7 @@ Pracuj na branchu feature/attack (z aktualnego master).
    - Z7: złe id: /api/events/nie-ma, /api/events/%7B%7D, id 5000 znaków, /api/reservations/abc/purchase, /api/reservations/aaaaaaaaaaaa/purchase, 24 znaki hex WIELKIMI literami, /api/tickets/<losowy poprawny kod> → 404 JSON, nigdy 500.
      Wyjątek (świadoma decyzja, CONTRACT.md §3): zepsute %-kodowanie (np. /api/reservations/%E0%A4%A/purchase) Next.js odrzuca przed handlerem — oczekuj 400 i NIE wymagaj JSON-a, tylko braku 500,
    - Z8: seatId "9-99" → 400 INVALID_SEAT,
+   - Z21: zwrócone expiresAt nigdy nie jest późniejsze niż event.startsAt (sprawdź na każdej udanej rezerwacji w ataku),
    - Z11: GET /api/reservations/:id i GET /api/tickets/:code nie zawierają e-maila (szukaj adresu w całym tekście odpowiedzi),
    - Z12: żadna odpowiedź błędu nie zawiera "at ", "Error:", "Mongo", ścieżek plików,
    - format błędu: każde JSON-owe 4xx/5xx ma { error, message } jako stringi,
@@ -125,7 +138,7 @@ Pracuj na branchu feature/attack (z aktualnego master).
    - curl-e kontraktu CEO do skopiowania (wszystkie endpointy z §3, z przykładowym _id kursu).
 4. DEMO.md — scenariusz demo na 5 minut: przejście klienta (rozkład → wagon → formularz → licznik → bilet), wygaśnięcie (TTL 120 s), pokaz attack.mjs na żywo, lista zagrożeń z §7 i jak każde obroniliśmy (jedno zdanie na zagrożenie). Dopisz gotową odpowiedź na pytanie CEO o rozbieżność PDF-ów: POST /api/reservations zwraca { reservationId, expiresAt }, a kod daje osobny zakup (PDF Etapu I).
 
-DEFINICJA "GOTOWE": attack.mjs na lokalnym połączonym systemie i na Vercelu = same PASS (z --slow też); reset działa i po nim Z1 dalej daje dokładnie 1×201; DEPLOY.md i DEMO.md gotowe.
+DEFINICJA "GOTOWE": poprawka z punktu 0 z testami (npm test zielony); attack.mjs na lokalnym połączonym systemie i na Vercelu = same PASS (z --slow też); reset działa i po nim Z1 dalej daje dokładnie 1×201; DEPLOY.md i DEMO.md gotowe.
 Zanim zaczniesz, pokaż mi krótki plan. Jeśli attack.mjs znajdzie błąd w cudzym pliku — NIE poprawiaj go, tylko opisz: endpoint, wejście, oczekiwany i faktyczny wynik, plik winowajcy (do przekazania właścicielowi).
 ```
 
@@ -223,32 +236,4 @@ MOJE KARTY: B (rezerwacja) i C (zakup) — backend.
 
 DEFINICJA "GOTOWE": wszystkie testy zielone, npm run build i npm run lint bez błędów, curl-e z kontraktu CEO zwracają dokładnie wymagane kształty i kody HTTP.
 Zanim zaczniesz pisać kod, pokaż mi krótki plan. Małe commity (Conventional Commits), na koniec opis PR z listą zagrożeń z CONTRACT.md §7, które obsłużyłem, i jak to przetestować.
-```
-
----
-
-## Prompt E2 — Eryk: przycięcie rezerwacji do odjazdu (Z21)
-
-```
-Projekt PAS S01 „Pociąg”. Przeczytaj CONTRACT.md — lider zmienił §2: expiresAt = min(createdAt + RESERVATION_TTL_SECONDS, new Date(event.startsAt)), nowe zagrożenie Z21 w §7.
-Pracuj na branchu fix/expires-at-departure (z aktualnego master). Zmieniaj tylko swoje pliki z §6.
-
-1. src/lib/reservations.ts → createReservation: expiresAt = min(createdAt + TTL, startsAt kursu). Kurs, który już odjechał, dalej daje 409 EVENT_DEPARTED (bez zmian).
-2. Testy: rezerwacja na kurs odjeżdżający za ~2 s przy TTL 900 → expiresAt == startsAt; po odjeździe purchase → 410 RESERVATION_EXPIRED, GET rezerwacji → status "expired", miejsce znika z takenSeats. Istniejące testy dalej zielone.
-3. src/lib/validation.ts: komentarz przy RESERVATION_ID_PATTERN mówi, że RESERVATION_ID_REGEX z types.ts ma flagę i — już nie ma (lider ją usunął). Popraw komentarz; możesz też używać RESERVATION_ID_REGEX zamiast własnej kopii.
-
-DEFINICJA "GOTOWE": npm test, npm run lint, npm run build zielone. Mały PR z opisem.
-```
-
----
-
-## Prompt K2 — Kamil: dwie drobne poprawki mapy wagonu
-
-```
-Projekt PAS S01 „Pociąg”, karta A. Przeczytaj CONTRACT.md (§5, §7 Z13). Pracuj na branchu fix/seat-map-refresh (z aktualnego master). Zmieniaj tylko swoje pliki z §6.
-
-1. src/components/events/SeatMap.tsx: po powrocie na mapę przyciskiem „Wstecz” Next.js pokazuje zapamiętaną wersję strony, więc przez max 10 s zajętości mogą być nieaktualne. Pobierz takenSeats od razu po zamontowaniu komponentu (w tym samym efekcie co interwał), nie czekając 10 s.
-2. Zmiana wagonu: zamiast router.replace (wysyła zapytanie RSC i renderuje stronę na serwerze) użyj window.history.replaceState(null, "", `?wagon=${n}`) — Next 15 obsługuje to bez przeładowania. Odświeżenie strony ma dalej pamiętać wagon.
-
-DEFINICJA "GOTOWE": po „Wstecz” z /reserve mapa od razu robi GET /api/events/:id (sprawdź w zakładce Network); klik w zakładkę wagonu nie wysyła żądania do serwera; npm run build i npm run lint zielone. Mały PR z opisem.
 ```
