@@ -4,6 +4,7 @@ import {
   isReservationId,
   MAX_BODY_BYTES,
   normalizeTicketCode,
+  readBodyBytes,
   readJsonBody,
   validateReservationBody,
 } from "@/lib/validation";
@@ -31,6 +32,11 @@ describe("validateReservationBody", () => {
       _id: "x",
     });
     expect(result).toEqual({ ok: true, value: VALID });
+  });
+
+  it("e-mail wraca małymi literami, imię bez zmian (D6)", () => {
+    const result = validateReservationBody({ ...VALID, customerName: "Jan KOWALSKI", email: " Jan.Kowalski@Example.COM " });
+    expect(result).toEqual({ ok: true, value: { ...VALID, customerName: "Jan KOWALSKI", email: "jan.kowalski@example.com" } });
   });
 
   it("granice długości: 100 znaków imienia i 254 znaki e-maila przechodzą", () => {
@@ -199,5 +205,25 @@ describe("readJsonBody", () => {
   it("Content-Length większy niż limit → za duże od razu", async () => {
     const result = await readJsonBody(post("{}", { "content-length": String(MAX_BODY_BYTES + 1) }));
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("readBodyBytes", () => {
+  it("zwraca dokładnie te bajty, które przyszły", async () => {
+    const bytes = new Uint8Array([0x7b, 0xff, 0x00, 0x7d]);
+    const req = new Request("http://localhost/x", { method: "POST", body: bytes });
+    expect(await readBodyBytes(req, 10)).toEqual({ ok: true, value: bytes });
+  });
+
+  it("brak body → puste bajty", async () => {
+    expect(await readBodyBytes(new Request("http://localhost/x", { method: "POST" }), 10)).toEqual({
+      ok: true,
+      value: new Uint8Array(),
+    });
+  });
+
+  it("ponad limit → za duże", async () => {
+    const req = new Request("http://localhost/x", { method: "POST", body: new Uint8Array(11) });
+    expect((await readBodyBytes(req, 10)).ok).toBe(false);
   });
 });
