@@ -4,16 +4,19 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeDb, ensureIndexes, getDb, RESERVATIONS_COLLECTION } from "@/lib/db";
 import {
   createReservation,
+  getCheckoutCandidate,
+  getLegacyPurchase,
   getReservation,
   getTakenSeats,
   getTicketByCode,
-  purchaseReservation,
   releaseExpired,
+  saveCheckoutSession,
 } from "@/lib/reservations";
 import { TICKET_CODE_REGEX, type CreateReservationBody } from "@/lib/types";
 import {
   DEPARTED_EVENT,
   FUTURE_EVENT,
+  payReservation,
   reservationsCollection,
   resetTestData,
   setTtl,
@@ -57,6 +60,7 @@ describe("ensureIndexes", () => {
       partialFilterExpression: { code: { $type: "string" } },
     });
     expect(byName.event_active).toMatchObject({ key: { eventId: 1, active: 1 } });
+    expect(byName.payment_session).toMatchObject({ key: { "payment.sessionId": 1 } });
   });
 
   it("jest idempotentne i bezpieczne przy równoległych wywołaniach", async () => {
@@ -165,56 +169,145 @@ describe("wygasanie (Z2)", () => {
   });
 });
 
-describe("purchaseReservation", () => {
-  it("kupuje: zwraca kod w formacie XXXX-XXXX i zapisuje paid", async () => {
+describe("D6, Z22: identyczna rezerwacja wysłana ponownie", () => {
+  it("po kolei → ta sama rezerwacja; nie przedłuża czasu i nie tworzy drugiego dokumentu", async () => {
+    const body = input({ seatId: "1-1" });
+    const first = await createReservation(body);
+    const second = await createReservation(body);
+    expect(first).toMatchObject({ ok: true, replay: false });
+    expect(second).toMatchObject({ ok: true, replay: true });
+    if (!first.ok || !second.ok) return;
+    expect(second.reservationId).toBe(first.reservationId);
+    expect(second.expiresAt).toEqual(first.expiresAt);
+    expect(second.amount).toBe(first.amount);
+    expect(await (await reservationsCollection()).countDocuments({ seatId: "1-1" })).toBe(1);
+  });
+
+  it("20 równoległych identycznych → jedna rezerwacja, jeden nowy, reszta to powtórki", async () => {
+    const body = input({ seatId: "1-2" });
+    const results = await Promise.all(Array.from({ length: 20 }, () => createReservation(body)));
+    const ids = new Set(results.map((r) => (r.ok ? r.reservationId : null)));
+    expect(ids.size).toBe(1);
+    expect(ids.has(null)).toBe(false);
+    expect(results.filter((r) => r.ok && !r.replay)).toHaveLength(1);
+    expect(await (await reservationsCollection()).countDocuments({ seatId: "1-2" })).toBe(1);
+  });
+
+  it("inna osoba: to samo imię z innym e-mailem albo inne imię z tym samym e-mailem → SEAT_TAKEN", async () => {
+    const body = input({ seatId: "1-3" });
+    await createReservation(body);
+    const taken = { ok: false, error: "SEAT_TAKEN" };
+    expect(await createReservation({ ...body, email: "ktos.inny@example.com" })).toEqual(taken);
+    expect(await createReservation({ ...body, customerName: "Ktoś Inny" })).toEqual(taken);
+  });
+
+  it("opłacona rezerwacja tej samej osoby → ta sama rezerwacja, kod bez zmian", async () => {
+    const body = input({ seatId: "1-4" });
+    const first = await createReservation(body);
+    if (!first.ok) throw new Error("rezerwacja nie powiodła się");
+    const code = await payReservation(first.reservationId);
+
+    expect(await createReservation(body)).toMatchObject({ ok: true, replay: true, reservationId: first.reservationId });
+    expect((await getReservation(first.reservationId))?.code).toBe(code);
+  });
+
+  it("po wygaśnięciu ta sama osoba dostaje nową rezerwację", async () => {
+    setTtl(SHORT_TTL_SECONDS);
+    const body = input({ seatId: "1-5" });
+    const first = await createReservation(body);
+    await waitForExpiry();
+    setTtl(60);
+    const second = await createReservation(body);
+    expect(second).toMatchObject({ ok: true, replay: false });
+    if (first.ok && second.ok) expect(second.reservationId).not.toBe(first.reservationId);
+  });
+});
+
+describe("D5: getLegacyPurchase — biletu bez płatności nie ma", () => {
+  it("held → PAYMENT_REQUIRED i nic się nie zmienia", async () => {
     const id = await reserve("1-1");
-    const result = await purchaseReservation(id);
-    expect(result).toEqual({ ok: true, code: expect.stringMatching(TICKET_CODE_REGEX) });
-
-    const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
-    expect(doc).toMatchObject({ status: "paid", active: true, code: result.ok ? result.code : "" });
-    expect(doc!.paidAt).toBeInstanceOf(Date);
+    expect(await getLegacyPurchase(id)).toEqual({ ok: false, error: "PAYMENT_REQUIRED" });
+    expect(await (await reservationsCollection()).findOne({ _id: new ObjectId(id) })).toMatchObject({
+      status: "held",
+      code: null,
+    });
   });
 
-  it("Z4: drugi zakup → ten sam kod", async () => {
+  it("paid → ten sam kod za każdym razem", async () => {
     const id = await reserve("1-2");
-    const first = await purchaseReservation(id);
-    const second = await purchaseReservation(id);
-    expect(first.ok && second.ok).toBe(true);
-    expect(second).toEqual(first);
+    const code = await payReservation(id);
+    expect(code).toMatch(TICKET_CODE_REGEX);
+    expect(await getLegacyPurchase(id)).toEqual({ ok: true, code });
+    expect(await getLegacyPurchase(id)).toEqual({ ok: true, code });
   });
 
-  it("Z4: 10 równoległych zakupów → wszystkie OK z jednym kodem", async () => {
-    const id = await reserve("1-5");
-    const results = await Promise.all(Array.from({ length: 10 }, () => purchaseReservation(id)));
-    expect(results.every((r) => r.ok)).toBe(true);
-    expect(new Set(results.map((r) => (r.ok ? r.code : null))).size).toBe(1);
-  });
-
-  it("Z3: zakup po TTL → RESERVATION_EXPIRED i rezerwacja oznaczona expired", async () => {
+  it("po TTL → RESERVATION_EXPIRED", async () => {
     setTtl(SHORT_TTL_SECONDS);
     const id = await reserve("1-6");
     await waitForExpiry();
-
-    expect(await purchaseReservation(id)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
-    expect(await purchaseReservation(id)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
-    const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
-    expect(doc).toMatchObject({ status: "expired", active: false, code: null });
-  });
-
-  it("Z3: 10 równoległych zakupów po TTL → same RESERVATION_EXPIRED", async () => {
-    setTtl(SHORT_TTL_SECONDS);
-    const id = await reserve("1-8");
-    await waitForExpiry();
-    const results = await Promise.all(Array.from({ length: 10 }, () => purchaseReservation(id)));
-    expect(results.every((r) => !r.ok && r.error === "RESERVATION_EXPIRED")).toBe(true);
+    expect(await getLegacyPurchase(id)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
   });
 
   it("nieistniejąca lub zła rezerwacja → RESERVATION_NOT_FOUND", async () => {
     const notFound = { ok: false, error: "RESERVATION_NOT_FOUND" };
-    expect(await purchaseReservation(new ObjectId().toHexString())).toEqual(notFound);
-    expect(await purchaseReservation("abc")).toEqual(notFound);
-    expect(await purchaseReservation("a".repeat(12))).toEqual(notFound);
+    expect(await getLegacyPurchase(new ObjectId().toHexString())).toEqual(notFound);
+    expect(await getLegacyPurchase("abc")).toEqual(notFound);
+    expect(await getLegacyPurchase("a".repeat(12))).toEqual(notFound);
+  });
+});
+
+describe("getCheckoutCandidate i saveCheckoutSession (§6)", () => {
+  const session = { sessionId: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" };
+
+  it("held: pełny dokument z e-mailem i kurs", async () => {
+    const body = input({ seatId: "1-1" });
+    const created = await createReservation(body);
+    if (!created.ok) throw new Error("rezerwacja nie powiodła się");
+
+    const candidate = await getCheckoutCandidate(created.reservationId);
+    expect(candidate.ok).toBe(true);
+    if (!candidate.ok) return;
+    expect(candidate.reservation.email).toBe(body.email);
+    expect(candidate.reservation.amount).toBe(FUTURE_EVENT.price);
+    expect(candidate.event._id).toBe(FUTURE_EVENT._id);
+  });
+
+  it("paid → ALREADY_PAID, po TTL → RESERVATION_EXPIRED, zły id → RESERVATION_NOT_FOUND", async () => {
+    const paid = await reserve("1-2");
+    await payReservation(paid);
+    expect(await getCheckoutCandidate(paid)).toEqual({ ok: false, error: "ALREADY_PAID" });
+
+    setTtl(SHORT_TTL_SECONDS);
+    const expired = await reserve("1-3");
+    await waitForExpiry();
+    expect(await getCheckoutCandidate(expired)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
+
+    expect(await getCheckoutCandidate("abc")).toEqual({ ok: false, error: "RESERVATION_NOT_FOUND" });
+  });
+
+  it("zapisuje tylko pierwszą sesję, także przy równoległych zapisach", async () => {
+    const id = await reserve("1-4");
+    await Promise.all(
+      Array.from({ length: 10 }, (_, i) =>
+        saveCheckoutSession(id, i === 0 ? session : { sessionId: `cs_test_inna_${i}`, url: "https://example.com" }),
+      ),
+    );
+    const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
+    expect(doc?.payment?.sessionId).toMatch(/^cs_test_/);
+    expect(doc?.payment?.createdAt).toBeInstanceOf(Date);
+    const saved = doc!.payment!;
+
+    await saveCheckoutSession(id, { sessionId: "cs_test_pozniej", url: "https://example.com/pozniej" });
+    const again = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
+    expect(again?.payment).toEqual(saved);
+  });
+
+  it("nie zapisuje sesji na opłaconej rezerwacji", async () => {
+    const id = await reserve("1-5");
+    await payReservation(id);
+    await saveCheckoutSession(id, session);
+    const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
+    expect(doc?.payment?.sessionId).not.toBe(session.sessionId);
   });
 });
 
@@ -241,7 +334,7 @@ describe("Z21: rezerwacja nie trwa dłużej niż do odjazdu", () => {
     expect(result.expiresAt.getTime()).toBeLessThan(new Date(FUTURE_EVENT.startsAt).getTime());
   });
 
-  it("odjazd przed końcem TTL → expiresAt = startsAt; po odjeździe zakup → 410, miejsce wolne", async () => {
+  it("odjazd przed końcem TTL → expiresAt = startsAt; po odjeździe rezerwacja wygasła, miejsce wolne", async () => {
     setTtl(900);
     const event = await insertEventDepartingIn(SHORT_TTL_SECONDS * 1000);
     const result = await createReservation(input({ eventId: SOON_EVENT_ID, seatId: "1-4" }));
@@ -251,7 +344,7 @@ describe("Z21: rezerwacja nie trwa dłużej niż do odjazdu", () => {
     expect(await getTakenSeats(SOON_EVENT_ID)).toContain("1-4");
 
     await waitForExpiry();
-    expect(await purchaseReservation(result.reservationId)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
+    expect(await getLegacyPurchase(result.reservationId)).toEqual({ ok: false, error: "RESERVATION_EXPIRED" });
     expect((await getReservation(result.reservationId))?.status).toBe("expired");
     expect(await getTakenSeats(SOON_EVENT_ID)).not.toContain("1-4");
     // Po odjeździe nowej rezerwacji już się nie zrobi.
@@ -262,12 +355,11 @@ describe("Z21: rezerwacja nie trwa dłużej niż do odjazdu", () => {
   });
 });
 
-describe("Z5: kupione miejsce nigdy nie wraca do puli", () => {
+describe("Z5: opłacone miejsce nigdy nie wraca do puli", () => {
   it("po TTL i po releaseExpired dalej zajęte, a ponowna rezerwacja → SEAT_TAKEN", async () => {
     setTtl(SHORT_TTL_SECONDS);
     const id = await reserve("2-20");
-    const purchase = await purchaseReservation(id);
-    expect(purchase.ok).toBe(true);
+    const code = await payReservation(id);
 
     await waitForExpiry();
     expect(await releaseExpired(FUTURE_EVENT._id)).toBe(0);
@@ -275,7 +367,7 @@ describe("Z5: kupione miejsce nigdy nie wraca do puli", () => {
 
     expect(await getTakenSeats(FUTURE_EVENT._id)).toContain("2-20");
     expect(await createReservation(input({ seatId: "2-20" }))).toEqual({ ok: false, error: "SEAT_TAKEN" });
-    expect(await purchaseReservation(id)).toEqual(purchase);
+    expect(await getLegacyPurchase(id)).toEqual({ ok: true, code });
 
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
     expect(doc).toMatchObject({ status: "paid", active: true });
@@ -320,12 +412,11 @@ describe("getReservation i getTicketByCode", () => {
 
   it("paid: kod w rezerwacji i bilet po kodzie (także małymi literami)", async () => {
     const id = await reserve("1-13");
-    const purchase = await purchaseReservation(id);
-    if (!purchase.ok) throw new Error("zakup nie powiódł się");
+    const code = await payReservation(id);
 
-    expect((await getReservation(id))?.code).toBe(purchase.code);
-    const ticket = await getTicketByCode(` ${purchase.code.toLowerCase()} `);
-    expect(ticket).toMatchObject({ code: purchase.code, seatId: "1-13" });
+    expect((await getReservation(id))?.code).toBe(code);
+    const ticket = await getTicketByCode(` ${code.toLowerCase()} `);
+    expect(ticket).toMatchObject({ code, seatId: "1-13", amount: FUTURE_EVENT.price });
     expect(ticket).not.toHaveProperty("email");
   });
 

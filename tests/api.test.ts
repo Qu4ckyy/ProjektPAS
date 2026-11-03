@@ -2,7 +2,6 @@
 import { ObjectId } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { closeDb } from "@/lib/db";
-import { purchaseReservation } from "@/lib/reservations";
 import { TICKET_CODE_REGEX } from "@/lib/types";
 import {
   apiCreate,
@@ -12,6 +11,7 @@ import {
   apiPurchase,
   DEPARTED_EVENT,
   FUTURE_EVENT,
+  payReservation,
   reservationsCollection,
   resetTestData,
   setTtl,
@@ -43,13 +43,6 @@ async function reserve(seatId: string): Promise<string> {
   const res = await apiCreate(validBody({ seatId }));
   expect(res.status, res.text).toBe(201);
   return (res.body as { reservationId: string }).reservationId;
-}
-
-/** Opłacenie rezerwacji z pominięciem Stripe (wewnętrzna funkcja; HTTP wymaga płatności — D5). */
-async function buy(id: string): Promise<string> {
-  const result = await purchaseReservation(id);
-  if (!result.ok) throw new Error(`Opłacenie ${id} nie powiodło się: ${result.error}`);
-  return result.code;
 }
 
 beforeAll(resetTestData);
@@ -101,6 +94,54 @@ describe("POST /api/reservations", () => {
     expect(doc).not.toHaveProperty("admin");
     expect(doc).not.toHaveProperty("polluted");
     expect(doc!.expiresAt.getFullYear()).toBeLessThan(2099);
+  });
+
+  describe("D6, Z22: identyczne żądanie", () => {
+    type Created = { reservationId: string; expiresAt: string; amount: number };
+
+    it("2× po kolei → 201, potem 200 z tą samą rezerwacją i tym samym kształtem", async () => {
+      const body = validBody({ seatId: "2-16" });
+      const first = await apiCreate(body);
+      const second = await apiCreate(body);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(200);
+      expect(second.body).toEqual(first.body);
+      expect(Object.keys(second.body as object).sort()).toEqual(["amount", "expiresAt", "reservationId"]);
+      expect(second.headers.get("cache-control")).toBe("no-store");
+      expect(await (await reservationsCollection()).countDocuments({ seatId: "2-16" })).toBe(1);
+    });
+
+    it("2× równolegle → 201 i 200 z tą samą rezerwacją", async () => {
+      const body = validBody({ seatId: "2-17" });
+      const results = await Promise.all([apiCreate(body), apiCreate(body)]);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 201]);
+      expect((results[0].body as Created).reservationId).toBe((results[1].body as Created).reservationId);
+    });
+
+    it("20× równolegle → 1× 201, 19× 200, jedna rezerwacja", async () => {
+      const body = validBody({ seatId: "2-18" });
+      const results = await Promise.all(Array.from({ length: 20 }, () => apiCreate(body)));
+      expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+      expect(results.filter((r) => r.status === 200)).toHaveLength(19);
+      expect(new Set(results.map((r) => (r.body as Created).reservationId)).size).toBe(1);
+    });
+
+    it("spacje i wielkość liter w e-mailu nie mają znaczenia; e-mail zapisany małymi literami", async () => {
+      const first = await apiCreate(validBody({ seatId: "2-19", customerName: "Anna Nowak", email: "Anna.Nowak@Example.com" }));
+      const second = await apiCreate(validBody({ seatId: "2-19", customerName: " Anna Nowak ", email: "  ANNA.NOWAK@example.COM " }));
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(200);
+      expect(second.body).toEqual(first.body);
+      expect(await (await reservationsCollection()).findOne({ seatId: "2-19" })).toMatchObject({ email: "anna.nowak@example.com" });
+    });
+
+    it("inna osoba → 409 SEAT_TAKEN", async () => {
+      const body = validBody({ seatId: "2-20" });
+      expect((await apiCreate(body)).status).toBe(201);
+      expectError(await apiCreate({ ...body, email: "inna@example.com" }), 409, "SEAT_TAKEN");
+      expectError(await apiCreate({ ...body, customerName: "Inne Imię" }), 409, "SEAT_TAKEN");
+    });
   });
 
   it("trim pól przed zapisem", async () => {
@@ -191,7 +232,7 @@ describe("POST /api/reservations/:id/purchase (zgodność z Etapem I, D5)", () =
   it("ignoruje body (także śmieciowe i z polami do podmiany)", async () => {
     const id = await reserve("1-2");
     expectError(await apiPurchase(id, JSON.stringify({ code: "AAAA-AAAA", status: "paid" })), 402, "PAYMENT_REQUIRED");
-    const code = await buy(id);
+    const code = await payReservation(id);
     const res = await apiPurchase(id, "nie-json");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ code });
@@ -200,7 +241,7 @@ describe("POST /api/reservations/:id/purchase (zgodność z Etapem I, D5)", () =
 
   it("opłacona: ponownie → 200 z tym samym kodem", async () => {
     const id = await reserve("1-3");
-    const code = await buy(id);
+    const code = await payReservation(id);
     expect(code).toMatch(TICKET_CODE_REGEX);
     expect((await apiPurchase(id)).body).toEqual({ code });
     expect((await apiPurchase(id)).body).toEqual({ code });
@@ -208,7 +249,7 @@ describe("POST /api/reservations/:id/purchase (zgodność z Etapem I, D5)", () =
 
   it("opłacona: 10 równoległych → 10× 200 z jednym kodem", async () => {
     const id = await reserve("1-4");
-    const code = await buy(id);
+    const code = await payReservation(id);
     const results = await Promise.all(Array.from({ length: 10 }, () => apiPurchase(id)));
     expect(results.map((r) => r.status)).toEqual(Array(10).fill(200));
     expect(new Set(results.map((r) => (r.body as { code: string }).code))).toEqual(new Set([code]));
@@ -230,12 +271,12 @@ describe("POST /api/reservations/:id/purchase (zgodność z Etapem I, D5)", () =
   it("Z5: kupione miejsce zostaje zajęte po TTL", async () => {
     setTtl(SHORT_TTL_SECONDS);
     const id = await reserve("1-6");
-    const code = await buy(id);
+    const code = await payReservation(id);
     await waitForExpiry();
 
     expect((await apiGetEvent(FUTURE_EVENT._id)).body).toMatchObject({ takenSeats: ["1-6"] });
     expectError(await apiCreate(validBody({ seatId: "1-6" })), 409, "SEAT_TAKEN");
-    expect(await buy(id)).toBe(code);
+    expect((await apiPurchase(id)).body).toEqual({ code });
     expect((await apiGetReservation(id)).body).toMatchObject({ status: "paid", code });
   });
 
@@ -277,7 +318,7 @@ describe("GET /api/reservations/:id", () => {
 
   it("paid: status paid i code", async () => {
     const id = await reserve("2-2");
-    const code = await buy(id);
+    const code = await payReservation(id);
     const res = await apiGetReservation(id);
     expect(res.body).toMatchObject({ status: "paid", code });
     expect(res.text).not.toContain("@example.com");
@@ -304,7 +345,7 @@ describe("GET /api/reservations/:id", () => {
 describe("GET /api/tickets/:code", () => {
   it("kupiony bilet: dokładne pola, bez e-maila; kod małymi literami i ze spacjami też działa", async () => {
     const id = await reserve("2-4");
-    const code = await buy(id);
+    const code = await payReservation(id);
 
     for (const variant of [code, code.toLowerCase(), ` ${code} `]) {
       const res = await apiGetTicket(variant);

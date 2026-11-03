@@ -39,20 +39,19 @@ const RESERVATION_ID_PATTERN = /^[0-9a-f]{24}$/;
 const MAX_CODE_INPUT_LENGTH = 64;
 
 const INVALID_JSON: Validation<never> = { ok: false, message: "Nieprawidłowy JSON w treści żądania." };
-const TOO_LARGE: Validation<never> = {
-  ok: false,
-  message: `Treść żądania jest za duża (maksymalnie ${MAX_BODY_BYTES / 1024} kB).`,
-};
 
 /**
- * Czyta body jako JSON z limitem rozmiaru. Nie ufa nagłówkowi Content-Length (może go nie być
+ * Czyta body jako bajty z limitem rozmiaru. Nie ufa nagłówkowi Content-Length (może go nie być
  * albo kłamać) — liczy bajty przy czytaniu i przerywa po przekroczeniu limitu.
- * Content-Type nie jest wymagany (curl -d wysyła application/x-www-form-urlencoded).
  */
-export async function readJsonBody(req: Request, maxBytes: number = MAX_BODY_BYTES): Promise<Validation<unknown>> {
+export async function readBodyBytes(req: Request, maxBytes: number): Promise<Validation<Uint8Array>> {
+  const tooLarge: Validation<never> = {
+    ok: false,
+    message: `Treść żądania jest za duża (maksymalnie ${maxBytes / 1024} kB).`,
+  };
   const declared = Number(req.headers.get("content-length"));
-  if (declared > maxBytes) return TOO_LARGE;
-  if (!req.body) return INVALID_JSON;
+  if (declared > maxBytes) return tooLarge;
+  if (!req.body) return { ok: true, value: new Uint8Array() };
 
   const reader = req.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -64,7 +63,7 @@ export async function readJsonBody(req: Request, maxBytes: number = MAX_BODY_BYT
       size += value.byteLength;
       if (size > maxBytes) {
         await reader.cancel().catch(() => {});
-        return TOO_LARGE;
+        return tooLarge;
       }
       chunks.push(value);
     }
@@ -79,10 +78,19 @@ export async function readJsonBody(req: Request, maxBytes: number = MAX_BODY_BYT
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
+  return { ok: true, value: bytes };
+}
 
+/**
+ * Czyta body jako JSON z limitem rozmiaru.
+ * Content-Type nie jest wymagany (curl -d wysyła application/x-www-form-urlencoded).
+ */
+export async function readJsonBody(req: Request, maxBytes: number = MAX_BODY_BYTES): Promise<Validation<unknown>> {
+  const body = await readBodyBytes(req, maxBytes);
+  if (!body.ok) return body;
   try {
     // fatal: niepoprawne UTF-8 to błąd, a nie ciche znaki zastępcze.
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(body.value);
     return { ok: true, value: JSON.parse(text) };
   } catch {
     return INVALID_JSON;
@@ -92,6 +100,7 @@ export async function readJsonBody(req: Request, maxBytes: number = MAX_BODY_BYT
 /**
  * Body POST /api/reservations. Każde pole musi być stringiem (typeof — blokuje {"$ne": null}),
  * po trim niepuste i w limicie długości. Zwraca tylko 4 znane pola — reszta jest ignorowana.
+ * E-mail wraca małymi literami: tak go zapisujemy i tak porównujemy powtórzone żądania (D6).
  */
 export function validateReservationBody(body: unknown): Validation<CreateReservationBody> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -122,6 +131,7 @@ export function validateReservationBody(body: unknown): Validation<CreateReserva
   if (!EMAIL_REGEX.test(value.email)) {
     return { ok: false, message: "Nieprawidłowy adres e-mail." };
   }
+  value.email = value.email.toLowerCase();
   return { ok: true, value };
 }
 

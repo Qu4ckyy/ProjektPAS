@@ -1,6 +1,6 @@
 // Kody biletów (Z10) — bez bazy.
 import { describe, expect, it } from "vitest";
-import { CODE_ALPHABET, generateCode } from "@/lib/reservations";
+import { CODE_ALPHABET, generateCode } from "@/lib/payments";
 import { TICKET_CODE_REGEX } from "@/lib/types";
 
 describe("generateCode", () => {

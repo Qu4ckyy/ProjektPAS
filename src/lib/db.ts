@@ -1,5 +1,5 @@
 // Połączenie z MongoDB — jeden klient na proces (Z18).
-import { MongoClient, type Db } from "mongodb";
+import { MongoClient, MongoServerError, type Db } from "mongodb";
 
 type MongoCache = {
   client: MongoClient | null;
@@ -44,6 +44,12 @@ function ensureIndexesOnce(db: Db): Promise<void> {
 }
 
 export const RESERVATIONS_COLLECTION = "reservations";
+export const STRIPE_EVENTS_COLLECTION = "stripe_events";
+
+/** E11000: naruszenie unikalnego indeksu. */
+export function isDuplicateKeyError(err: unknown): boolean {
+  return err instanceof MongoServerError && err.code === 11000;
+}
 
 /**
  * Indeksy kolekcji reservations — CONTRACT.md §2. Idempotentne (createIndexes z tymi samymi
@@ -68,6 +74,8 @@ export async function ensureIndexes(db: Db): Promise<void> {
     },
     // takenSeats i releaseExpired dla kursu.
     { key: { eventId: 1, active: 1 }, name: "event_active" },
+    // Sesja Stripe → rezerwacja (stripe_events ma unikalne _id, nie potrzebuje indeksów).
+    { key: { "payment.sessionId": 1 }, name: "payment_session" },
   ]);
 }
 

@@ -1,4 +1,4 @@
-// GET /api/tickets/:code — CONTRACT.md §3. Właściciel: Eryk. Tylko kupione bilety, bez e-maila (Z11).
+// GET /api/tickets/:code — CONTRACT.md §3. Właściciel: Eryk. Tylko opłacone bilety, bez e-maila (Z11).
 import { NextResponse } from "next/server";
 import { jsonError, withErrorHandling } from "@/lib/errors";
 import { getTicketByCode, RESERVATION_ERRORS } from "@/lib/reservations";
