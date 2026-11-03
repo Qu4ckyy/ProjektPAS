@@ -6,3 +6,7 @@ config({ path: ".env.local", quiet: true });
 
 // Testy zawsze na osobnej bazie — CONTRACT.md §1. Czyszczą reservations, więc nigdy nie na Twojej ani produkcyjnej.
 process.env.MONGODB_DB = "pociag_test";
+
+// Żądania w testach idą bez nagłówka IP, więc liczą się jako jeden klient, a Z1 sam wysyła 50 naraz.
+// Nadpisujemy też wartość z .env.local (wzór ma 40). Testy limitu ustawiają własny w beforeEach.
+process.env.RATE_LIMIT_MAX = "100000";
