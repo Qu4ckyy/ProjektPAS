@@ -1,13 +1,13 @@
 "use client";
-// Karta B + C: licznik „Trzymamy Twoje miejsce jeszcze 14:32” i przycisk „Kupuję bilet”.
-import { useRouter } from "next/navigation";
+// Licznik „Trzymamy Twoje miejsce jeszcze 14:32” i przycisk „Zapłać 89,00 zł” (Etap II: Stripe Checkout).
+// Szkielet M1 — dopracowanie (429, 503, ALREADY_PAID, opis trybu testowego) w M2.
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, NETWORK_MESSAGE } from "@/components/reservation/api";
 import { Notice } from "@/components/reservation/Notice";
 import { TripSummary } from "@/components/reservation/TripSummary";
 import { useCountdown } from "@/components/reservation/useCountdown";
-import { formatCountdown } from "@/lib/format";
-import type { PurchaseResponse, ReservationResponse } from "@/lib/types";
+import { formatCountdown, formatPrice } from "@/lib/format";
+import type { CheckoutResponse, ReservationResponse } from "@/lib/types";
 
 type Props = {
   reservation: ReservationResponse;
@@ -17,7 +17,6 @@ type Props = {
 };
 
 export function HoldView({ reservation, receivedAt, onExpired, onNotFound }: Props) {
-  const router = useRouter();
   const secondsLeft = useCountdown(reservation.expiresAt, reservation.serverNow, receivedAt);
   const [buying, setBuying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,18 +25,19 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound }: Pro
   const lastMinute = secondsLeft <= 60;
   const minutesLeft = Math.ceil(secondsLeft / 60);
 
-  async function buy() {
+  async function pay() {
     // Ref chroni przed podwójnym kliknięciem, zanim React zablokuje przycisk (Z4).
     if (buyingRef.current) return;
     buyingRef.current = true;
     setBuying(true);
     setError(null);
-    const res = await apiFetch<PurchaseResponse>(
-      `/api/reservations/${encodeURIComponent(reservation.reservationId)}/purchase`,
+    const res = await apiFetch<CheckoutResponse>(
+      `/api/reservations/${encodeURIComponent(reservation.reservationId)}/checkout`,
       { method: "POST" },
     );
     if (res.kind === "ok") {
-      router.replace(`/reservations/${encodeURIComponent(res.data.code)}`);
+      // Przycisk zostaje zablokowany aż do przejścia na stronę płatności.
+      window.location.assign(res.data.url);
       return;
     }
     buyingRef.current = false;
@@ -50,7 +50,7 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound }: Pro
 
   useEffect(() => {
     // Serwer i tak odrzuci zakup po czasie — pokazujemy to od razu, bez przeładowania.
-    // Trwający zakup rozstrzygnie serwer (200 albo 410).
+    // Trwające przejście do płatności rozstrzygnie serwer (200 albo 410).
     if (expired && !buyingRef.current) onExpired();
   }, [expired, onExpired]);
 
@@ -73,10 +73,10 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound }: Pro
         {/* Czytnik ekranu dostaje komunikat co minutę, nie co sekundę. */}
         <p className="sr-only" aria-live="polite">
           {lastMinute
-            ? "Została mniej niż minuta na zakup biletu."
+            ? "Została mniej niż minuta na opłacenie biletu."
             : `Trzymamy Twoje miejsce jeszcze ${minutesLeft} min.`}
         </p>
-        {lastMinute && <p className="mt-2 text-sm text-amber-900">Ostatnia minuta — kup bilet, zanim miejsce wróci do puli.</p>}
+        {lastMinute && <p className="mt-2 text-sm text-amber-900">Ostatnia minuta — zapłać, zanim miejsce wróci do puli.</p>}
       </div>
 
       <TripSummary event={reservation.event} seatId={reservation.seatId} />
@@ -85,23 +85,26 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound }: Pro
         <p className="text-sm text-neutral-600">
           Rezerwacja na: <strong className="text-neutral-900">{reservation.customerName}</strong>
         </p>
-        <p className="mt-1 text-sm text-neutral-600">Płatność online pojawi się w kolejnym etapie — teraz bilet jest od razu Twój.</p>
+        <p className="mt-1 text-sm text-neutral-600">
+          Do zapłaty: <strong className="text-neutral-900">{formatPrice(reservation.amount)}</strong>. Płatność
+          obsługuje Stripe — bilet z kodem dostaniesz zaraz po potwierdzeniu płatności.
+        </p>
 
         {error && (
           <div className="mt-4">
-            <Notice tone="error" title="Nie udało się kupić biletu" autoFocus>
-              {error} Możesz bezpiecznie spróbować ponownie — nie kupisz biletu dwa razy.
+            <Notice tone="error" title="Nie udało się przejść do płatności" autoFocus>
+              {error} Możesz bezpiecznie spróbować ponownie — nie zapłacisz dwa razy.
             </Notice>
           </div>
         )}
 
         <button
           type="button"
-          onClick={() => void buy()}
+          onClick={() => void pay()}
           disabled={buying}
           className="mt-4 w-full rounded-lg bg-emerald-700 px-4 py-3 text-lg font-semibold text-white transition hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-wait disabled:opacity-60"
         >
-          {buying ? "Kupuję…" : error ? "Spróbuj ponownie" : "Kupuję bilet"}
+          {buying ? "Przechodzę do płatności…" : error ? "Spróbuj ponownie" : `Zapłać ${formatPrice(reservation.amount)}`}
         </button>
       </div>
     </div>
