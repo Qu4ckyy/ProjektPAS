@@ -1,69 +1,74 @@
-# DEMO.md — Etap I u CEO (5 minut)
+# DEMO.md — Etap II u CEO (6 minut)
 
-Firma **Konduktor**, wariant: pociąg. Prowadzi lider (Mateusz).
+Firma **Konduktor**, wariant: pociąg. Etap II: płatność kartą przez Stripe Checkout (tryb testowy). Prowadzi lider (Mateusz).
 
 ## Przed demem (10 minut wcześniej)
 
-- [ ] Vercel: `RESERVATION_TTL_SECONDS=120`, zrobiony redeploy.
-- [ ] `MONGODB_DB=pociag npm run reset -- --yes --prod`, czyli czyste miejsca.
-- [ ] Otwarte karty: rozkład jazdy (`/`), drugi kurs na mapie (do pokazania zajętości), terminal z `attack.mjs`.
+- [ ] Vercel: `RESERVATION_TTL_SECONDS=120`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `APP_URL` ustawione, zrobiony redeploy.
+- [ ] `MONGODB_DB=pociag npm run reset -- --yes --prod` — czyste miejsca (nikt nie płaci w tym momencie).
+- [ ] Otwarte karty: rozkład jazdy (`/`), ten sam kurs na mapie w drugiej karcie, Stripe Dashboard (sandbox) → Payments, terminal z `attack.mjs`.
+- [ ] Karty testowe pod ręką: `4242 4242 4242 4242`, `4000 0000 0000 0002`, `4000 0025 0000 3155` (data dowolna przyszła, CVC dowolne).
 
 ## Scenariusz
 
-**1. Klient kupuje bilet (≈ 1,5 min)**
-1. `/`: rozkład jazdy. Kursy pogrupowane po dniach, odjazd, przyjazd, czas przejazdu, wolne miejsca.
-2. Klik w kurs: mapa wagonu. Przełączam Wagon 1 / Wagon 2, pokazuję okno (niebieski pasek) i korytarz.
-3. Klik w wolne miejsce: formularz z „Wagon 2, miejsce 14 · przy korytarzu”. Wpisuję `jan@localhost` i pokazuję błąd przy polu.
-4. Poprawiam e-mail, „Rezerwuję miejsce”: licznik „Trzymamy Twoje miejsce jeszcze 1:59”.
-5. W drugiej karcie mapa: to miejsce jest już szare, bo dla innych wygląda na zajęte.
-6. „Kupuję bilet”: bilet z relacją, odjazdem, wagonem, miejscem i kodem `XXXX-XXXX`. „Drukuj”.
+**1. Klient płaci kartą i dostaje bilet (≈ 2 min)**
+1. `/`: rozkład jazdy z cenami (89 / 129 / 59 zł). Klik w kurs: mapa wagonu z ceną miejsca.
+2. Klik w wolne miejsce: formularz z „Cena miejsca: 89,00 zł”. „Rezerwuję miejsce” → licznik 2:00 i przycisk **„Zapłać 89,00 zł”**.
+3. W drugiej karcie mapa: to miejsce jest już szare.
+4. „Zapłać” → strona Stripe z nazwą kursu, „Wagon 1, miejsce 5 · …” i kwotą z naszej bazy. Karta `4242…` → „Zapłać”.
+5. Powrót: „Płatność w toku…” → po chwili sam bilet z kodem i „Zapłacono 89,00 zł”.
+6. Stripe Dashboard → Payments: płatność 89,00 zł; Developers → Webhooks: `checkout.session.completed` → 200.
 
-**2. Rezerwacja przepada (≈ 1 min)**
-1. Rezerwuję inne miejsce i nie kupuję.
-2. Licznik w ostatniej minucie robi się pomarańczowy, a przy 0:00 pojawia się „Rezerwacja wygasła, miejsce wróciło do puli”.
-3. Mapa: miejsce znowu jest wolne. Rezerwuję je ponownie.
+**2. Odmowa, przerwanie i ponowna płatność (≈ 1,5 min)**
+1. Nowa rezerwacja → „Zapłać” → karta `4000 0000 0000 0002` → Stripe: „Karta została odrzucona”. U nas rezerwacja dalej czeka.
+2. Strzałka „wróć” na stronie Stripe → „Płatność przerwana. Nic nie pobraliśmy” + licznik + **„Zapłać ponownie”** → ta sama strona Stripe.
+3. Karta `4000 0025 0000 3155` → okno 3D Secure → Complete → bilet.
 
-**3. Sam atakuję system (≈ 1,5 min)**
+**3. Spóźniona płatność (≈ 30 s opowieści + wynik przygotowany wcześniej)**
+Otwieram stronę Stripe, czekam ponad 2 minuty i płacę: rezerwacja już wygasła, więc biletu nie ma, a Stripe Dashboard pokazuje automatyczny zwrot. (Przygotuj to przed demem, żeby nie czekać na żywo.)
+
+**4. Sam atakuję system (≈ 1,5 min)**
 ```bash
-node scripts/attack.mjs https://<produkcja>.vercel.app
+node scripts/attack.mjs https://<adres>.vercel.app
 ```
-Na żywo: 50 równoległych rezerwacji jednego miejsca daje 1×201 i 49×409, 10 równoległych zakupów daje jeden kod, a śmieciowe dane i złe identyfikatory dają 400/404. Na końcu `N/N PASS`.
+Na żywo: kryteria A1–C4 po kolei — identyczna rezerwacja wysłana dwa razy daje tę samą (B1), 20 naraz na jedno miejsce daje 1×201 (B2), 100 rezerwacji w 10 s z jednego klienta daje 429 z `Retry-After` (B5), 5 równoległych „Zapłać” daje jeden adres płatności (C1), webhook bez podpisu daje 400. Na końcu `N/N PASS`.
 
-**4. Lista zagrożeń (≈ 1 min)**: tabela niżej.
+**5. Lista zagrożeń (≈ 1 min)**: tabela niżej, nowe Z22–Z35.
 
-## Jak obroniliśmy każde zagrożenie (CONTRACT.md §7)
+## Jak obroniliśmy zagrożenia Etapu II (CONTRACT.md §7)
 
 | # | Zagrożenie | Obrona w jednym zdaniu |
 |---|---|---|
-| Z1 | Dwie osoby rezerwują to samo miejsce naraz | Unikalny częściowy indeks w MongoDB `{eventId, seatId}` dla aktywnych rezerwacji: baza przepuszcza dokładnie jedną, reszta dostaje 409. |
-| Z2 | Wygasła rezerwacja blokuje miejsce na zawsze | Zajętość liczymy z `expiresAt > teraz`, a przed nową rezerwacją wygasłe są zwalniane. Nie potrzeba żadnego crona. |
-| Z3 | Zakup po czasie | Zakup to jedno atomowe `findOneAndUpdate` z warunkiem `expiresAt > teraz`; po czasie dostaje 410. |
-| Z4 | Podwójny klik / równoległe zakupy | Zakup jest idempotentny: ponowny zwraca ten sam kod, a przyciski blokują się już przy pierwszym kliknięciu. |
-| Z5 | Kupione miejsce wraca do puli | Kupiona rezerwacja nigdy nie wygasa i trzyma indeks na zawsze. |
-| Z6 | Śmieciowe dane | Każde pole musi być tekstem z limitem długości. Body jest limitowane do 10 kB, a niepoprawny JSON i UTF-8 dają 400. |
-| Z7 | Zły identyfikator w adresie | Format sprawdzamy regexem przed zapytaniem do bazy, więc wraca 404, nigdy 500. |
-| Z8 | Kurs lub miejsce nie istnieje | 404 `EVENT_NOT_FOUND` / 400 `INVALID_SEAT`, a formularz pokazuje komunikat zamiast pól. |
-| Z9 | Rezerwacja na pociąg, który odjechał | 409 `EVENT_DEPARTED`; rozkład i mapa wyszarzają taki kurs. |
-| Z10 | Zgadywanie kodów biletów | Kod ma 8 znaków z `crypto.randomBytes`, czyli 32⁸ ≈ 10¹² kombinacji, bez mylących znaków 0/O/1/I. |
-| Z11 | Wyciek danych osobowych | E-mail nigdy nie wraca w odpowiedzi API, a bilet po kodzie pokazuje tylko imię. |
-| Z12 | Stack trace w odpowiedzi | Każdy wyjątek zamieniamy na 500 `INTERNAL_ERROR` z ogólnym komunikatem, a szczegóły trafiają tylko do logów. |
-| Z13 | Mapa z cache pokazuje stare zajętości | `force-dynamic` i `no-store`, odświeżanie co 10 s, po powrocie na kartę i po „Wstecz”. |
-| Z14 | Ktoś zajął miejsce, zanim kliknąłem | Formularz obsługuje 409: „Ktoś był szybszy” i powrót do mapy. |
-| Z15 | Zegar klienta przestawiony | Licznik liczymy z `serverNow` i `expiresAt` z serwera, nie z zegara telefonu. |
-| Z16 | XSS przez imię | React escapuje tekst, nigdzie nie używamy `dangerouslySetInnerHTML`, a znaki sterujące w imieniu dają 400. |
-| Z17 | Zła wartość TTL | Walidacja 1–86400 s; zła wartość daje 900 i warning, a nie Invalid Date. |
-| Z18 | Burza połączeń do Mongo na Vercelu | Jeden `MongoClient` na instancję, trzymany w `globalThis`. |
-| Z19 | Atak wyczerpie miejsca przed demem | `npm run reset` czyści rezerwacje przez `deleteMany`, więc indeksy zostają. |
-| Z20 | Godziny w złej strefie | W bazie UTC, w interfejsie zawsze Europe/Warsaw. |
-| Z21 | Zakup po odjeździe (rezerwacja tuż przed odjazdem) | `expiresAt` nie wypada później niż odjazd, więc po odjeździe zakup daje 410. |
+| Z22 | Ta sama rezerwacja wysłana dwa razy (B1) | Identyczne żądanie tej samej osoby na zajęte przez nią miejsce zwraca tę samą rezerwację (200), inna osoba dostaje 409. |
+| Z23 | Jeden klient zalewa API (B5) | 40 żądań / 10 s na IP, liczniki w MongoDB (działa na wielu instancjach Vercela), po limicie 429 z `Retry-After`; inni klienci nie odczuwają. |
+| Z24 | Płatność po wygaśnięciu rezerwacji | Webhook nie wystawia biletu i automatycznie zwraca pieniądze. |
+| Z25 | Płatność X w chwili, gdy Y rezerwuje to samo miejsce (C2) | Przyjęcie płatności to jedno atomowe przejście, które działa tylko, jeśli rezerwacja X nadal trzyma miejsce — zawsze jeden właściciel, przegrany dostaje zwrot. |
+| Z26 | Dwie płatności za jedną rezerwację | Jedna sesja Stripe na rezerwację (klucz idempotencji); gdyby jednak przyszła druga płatność — zwrot. |
+| Z27 | Sfałszowany webhook „zapłacone” | Podpis Stripe sprawdzamy na surowym body; bez poprawnego podpisu 400 i nic się nie zmienia. |
+| Z28 | Stripe wysyła ten sam webhook kilka razy | Log zdarzeń i atomowe przejścia: powtórka niczego nie zmienia, kod biletu zostaje ten sam. |
+| Z29 | Podmieniona kwota albo zmiana ceny po rezerwacji | Kwota zawsze z rezerwacji zapisanej w bazie, nigdy od klienta; webhook sprawdza kwotę i walutę, zła → zwrot. |
+| Z30 | Ktoś wchodzi na stronę „sukcesu” bez płacenia | Bilet pokazujemy tylko, gdy w bazie jest `paid`, nigdy na podstawie adresu. |
+| Z31 | Webhook się spóźnia albo nie dochodzi | Strona powrotu odpytuje serwer co 2 s, a serwer sam pyta Stripe o sesję i przyjmuje opłaconą. |
+| Z32 | Klucze Stripe w repo albo w przeglądarce | Klucze tylko w zmiennych środowiskowych serwera; serwer odrzuca każdy klucz inny niż `sk_test_`. |
+| Z33 | Przekierowanie po płatności na obcą domenę | Adresy powrotu budujemy z `APP_URL`, nigdy z nagłówka `Host`. |
+| Z34 | Stripe niedostępny | 503 z komunikatem „Płatności chwilowo nie działają”, rezerwacja nietknięta, „Zapłać” można ponowić. |
+| Z35 | Karta odrzucona albo 3D Secure | Obsługuje strona Stripe; klient może wrócić i zapłacić ponownie tą samą sesją, dopóki rezerwacja jest ważna. |
+
+Z1–Z21 z Etapu I działają dalej (zakup = teraz płatność) — tabela w historii repo (`git show 06953ef:DEMO.md`).
 
 ## Pytania, które mogą paść
 
-**„Prezentacja mówi, że `POST /api/reservations` zwraca `{ reservationId, code }`. Dlaczego zwracacie `expiresAt`?”**
-Trzymamy się PDF-u Etapu I, który jest nowszy i dokładniejszy: rezerwacja zwraca `{ reservationId, expiresAt }`, a kod biletu daje dopiero zakup `POST /api/reservations/:id/purchase` → `{ code }`. Tak działa przepływ z PDF-u: rezerwacja na 15 minut, potem „Kupuję” i kod.
+**„Dlaczego bilet wystawia webhook, a nie strona powrotu?”**
+Na stronę powrotu da się wejść bez płacenia — to zwykły adres. Webhook przychodzi bezpośrednio od Stripe i jest podpisany, więc tylko on (albo nasze zapytanie do Stripe o sesję) może potwierdzić płatność.
 
-**„Co, jeśli dwie instancje na Vercelu przyjmą rezerwację tego samego miejsca w tej samej milisekundzie?”**
-Rozstrzyga baza, a nie aplikacja: unikalny indeks działa w MongoDB, więc niezależnie od liczby instancji przechodzi dokładnie jedna rezerwacja.
+**„Co, jeśli klient zapłaci dwa razy?”**
+Każde „Zapłać” dla tej samej rezerwacji otwiera tę samą sesję Stripe, więc druga płatność praktycznie nie jest możliwa. Gdyby jednak przyszła, webhook widzi, że rezerwacja jest już opłacona, i zwraca pieniądze.
 
-**„Czy da się zmienić czas rezerwacji bez wdrażania kodu?”**
-Tak: zmienna `RESERVATION_TTL_SECONDS` na Vercelu i redeploy. Na testy ustawiamy 120.
+**„Gdzie są klucze Stripe?”**
+Tylko w zmiennych środowiskowych na Vercelu i w lokalnych `.env.local` (w `.gitignore`). Nigdy w repo ani w przeglądarce. Serwer odmawia pracy z kluczem produkcyjnym `sk_live_`.
+
+**„Skąd wiecie, że nie da się podmienić kwoty?”**
+Klient nie wysyła kwoty w ogóle. Cena jest zapisywana w rezerwacji w chwili rezerwacji, z niej tworzymy sesję Stripe, a webhook porównuje zapłaconą kwotę z rezerwacją.
+
+**„Co z kryteriami z Etapu I?”**
+Naprawiliśmy B1 (identyczna rezerwacja → ta sama, wcześniej 409) i B5 (limit ruchu, wcześniej brak). Reszta była zaliczona i dalej przechodzi w `attack.mjs`.

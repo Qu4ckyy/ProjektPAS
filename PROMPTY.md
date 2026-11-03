@@ -3,9 +3,9 @@
 Prompty Etapu I: [PROMPTY-ETAP-1.md](PROMPTY-ETAP-1.md).
 
 Kolejność:
-1. **Mateusz — M1 (szkielet Etapu II + konto Stripe).** Merge do `master`. Dopiero wtedy Kamil i Eryk robią `git pull` i zaczynają.
-2. Równolegle: **Kamil — K2**, **Eryk — E2**, **Mateusz — M2**.
-3. **Mateusz — M3 (spięcie, Stripe na Vercelu, atak, demo)**, gdy PR-y Kamila i Eryka są w `master`.
+1. ✅ **Mateusz — M1 (szkielet Etapu II + konto Stripe)** — PR #9.
+2. ✅ **Kamil — K2** — PR #11. ✅ **Eryk — E2** — PR #12. ✅ **Mateusz — M2** — PR #10.
+3. ✅ **Mateusz — M3 (spięcie, atak, demo)** — PR z `feature/e2-attack`. Zostaje konfiguracja Vercela i webhooka w panelu Stripe (DEPLOY.md §2–§3) i test kart na produkcji (§6).
 
 Każdy pracuje na świeżym `master` (`git checkout master && git pull`). W `.env.local` każdy ma: `MONGODB_URI`, własną `MONGODB_DB`, `STRIPE_SECRET_KEY` (testowy, od lidera), `STRIPE_WEBHOOK_SECRET` (z własnego `stripe listen`), `APP_URL=http://localhost:3000`. Kluczy nie wklejamy do czatu ani do repo.
 
