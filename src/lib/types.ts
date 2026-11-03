@@ -15,7 +15,7 @@ export type TrainEvent = {
   wagons: Wagon[];
 };
 
-export type ReservationStatus = "held" | "purchased" | "expired";
+export type ReservationStatus = "held" | "paid" | "expired";
 
 export type Reservation = {
   _id: ObjectId;
@@ -28,7 +28,7 @@ export type Reservation = {
   active: boolean;
   createdAt: Date;
   expiresAt: Date;
-  purchasedAt?: Date;
+  paidAt?: Date;
 };
 
 // --- Body i odpowiedzi API (§3) ---
@@ -62,7 +62,7 @@ export type TicketResponse = {
   code: string;
   seatId: string;
   customerName: string;
-  purchasedAt: string;
+  paidAt: string;
   event: TrainEvent;
 };
 

@@ -57,7 +57,7 @@ export function TicketView({ ticket }: { ticket: TicketResponse }) {
           <p className="text-xs font-medium tracking-wide text-neutral-500 uppercase">Kod biletu</p>
           <p className="mt-1 font-mono text-4xl font-bold tracking-[0.2em] text-neutral-900">{ticket.code}</p>
           <p className="mt-1 text-xs text-neutral-500">
-            Kupiono {formatDate(ticket.purchasedAt)}, {formatTime(ticket.purchasedAt)}
+            Kupiono {formatDate(ticket.paidAt)}, {formatTime(ticket.paidAt)}
           </p>
         </div>
       </article>

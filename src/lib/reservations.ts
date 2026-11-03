@@ -91,7 +91,7 @@ export async function getTakenSeats(eventId: string): Promise<string[]> {
   const seats = await reservations.distinct("seatId", {
     eventId,
     active: true,
-    $or: [{ status: "purchased" }, { expiresAt: { $gt: new Date() } }],
+    $or: [{ status: "paid" }, { expiresAt: { $gt: new Date() } }],
   });
   return seats.sort();
 }
@@ -156,7 +156,7 @@ export async function purchaseReservation(id: string): Promise<PurchaseResult> {
     try {
       const purchased = await reservations.findOneAndUpdate(
         { _id, status: "held", active: true, expiresAt: { $gt: now } },
-        { $set: { status: "purchased", code: generateCode(), purchasedAt: now } },
+        { $set: { status: "paid", code: generateCode(), paidAt: now } },
         { returnDocument: "after", projection: { code: 1 } },
       );
       if (purchased?.code) return { ok: true, code: purchased.code };
@@ -176,7 +176,7 @@ export async function purchaseReservation(id: string): Promise<PurchaseResult> {
   );
   const current = await reservations.findOne({ _id }, { projection: { status: 1, code: 1 } });
   if (!current) return { ok: false, error: "RESERVATION_NOT_FOUND" };
-  if (current.status === "purchased" && current.code) return { ok: true, code: current.code };
+  if (current.status === "paid" && current.code) return { ok: true, code: current.code };
   return { ok: false, error: "RESERVATION_EXPIRED" };
 }
 
@@ -200,7 +200,7 @@ export async function getReservation(id: string): Promise<ReservationResponse | 
     status,
     expiresAt: doc.expiresAt.toISOString(),
     serverNow: now.toISOString(),
-    ...(status === "purchased" && doc.code ? { code: doc.code } : {}),
+    ...(status === "paid" && doc.code ? { code: doc.code } : {}),
     event,
   };
 }
@@ -211,7 +211,7 @@ export async function getTicketByCode(code: string): Promise<TicketResponse | nu
   if (!normalized) return null;
   const reservations = await reservationsCollection();
   const doc = await reservations.findOne(
-    { code: normalized, status: "purchased" },
+    { code: normalized, status: "paid" },
     { projection: { email: 0 } },
   );
   if (!doc?.code) return null;
@@ -222,7 +222,7 @@ export async function getTicketByCode(code: string): Promise<TicketResponse | nu
     code: doc.code,
     seatId: doc.seatId,
     customerName: doc.customerName,
-    purchasedAt: (doc.purchasedAt ?? doc.createdAt).toISOString(),
+    paidAt: (doc.paidAt ?? doc.createdAt).toISOString(),
     event,
   };
 }

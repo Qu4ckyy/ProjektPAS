@@ -79,7 +79,7 @@ describe("POST /api/reservations", () => {
     const json = JSON.stringify(
       validBody({
         seatId: "2-15",
-        status: "purchased",
+        status: "paid",
         active: false,
         code: "AAAA-AAAA",
         expiresAt: "2099-01-01T00:00:00.000Z",
@@ -190,7 +190,7 @@ describe("POST /api/reservations/:id/purchase", () => {
     const res = await apiPurchase(id, JSON.stringify({ code: "AAAA-AAAA", status: "held", eventId: "x" }));
     expect(res.status).toBe(200);
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
-    expect(doc).toMatchObject({ status: "purchased", code: (res.body as { code: string }).code, eventId: FUTURE_EVENT._id });
+    expect(doc).toMatchObject({ status: "paid", code: (res.body as { code: string }).code, eventId: FUTURE_EVENT._id });
     expect((await apiPurchase(id, "nie-json")).status).toBe(200);
   });
 
@@ -229,7 +229,7 @@ describe("POST /api/reservations/:id/purchase", () => {
     expect((await apiGetEvent(FUTURE_EVENT._id)).body).toMatchObject({ takenSeats: ["1-6"] });
     expectError(await apiCreate(validBody({ seatId: "1-6" })), 409, "SEAT_TAKEN");
     expect(await buy(id)).toBe(code);
-    expect((await apiGetReservation(id)).body).toMatchObject({ status: "purchased", code });
+    expect((await apiGetReservation(id)).body).toMatchObject({ status: "paid", code });
   });
 
   it.each([
@@ -268,11 +268,11 @@ describe("GET /api/reservations/:id", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("purchased: status purchased i code", async () => {
+  it("paid: status paid i code", async () => {
     const id = await reserve("2-2");
     const code = await buy(id);
     const res = await apiGetReservation(id);
-    expect(res.body).toMatchObject({ status: "purchased", code });
+    expect(res.body).toMatchObject({ status: "paid", code });
     expect(res.text).not.toContain("@example.com");
   });
 
@@ -302,10 +302,10 @@ describe("GET /api/tickets/:code", () => {
     for (const variant of [code, code.toLowerCase(), ` ${code} `]) {
       const res = await apiGetTicket(variant);
       expect(res.status).toBe(200);
-      expect(Object.keys(res.body as object).sort()).toEqual(["code", "customerName", "event", "purchasedAt", "seatId"]);
+      expect(Object.keys(res.body as object).sort()).toEqual(["code", "customerName", "event", "paidAt", "seatId"]);
       expect(res.body).toMatchObject({ code, seatId: "2-4" });
       expect((res.body as { event: unknown }).event).toEqual(FUTURE_EVENT);
-      expectIso((res.body as { purchasedAt: string }).purchasedAt);
+      expectIso((res.body as { paidAt: string }).paidAt);
       expect(res.text).not.toContain("email");
       expect(res.text).not.toContain("@example.com");
     }

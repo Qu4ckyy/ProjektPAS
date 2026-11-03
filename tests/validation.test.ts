@@ -25,7 +25,7 @@ describe("validateReservationBody", () => {
       seatId: " 2-14",
       customerName: "  Jan Kowalski  ",
       email: " jan@example.com ",
-      status: "purchased",
+      status: "paid",
       code: "AAAA-AAAA",
       active: false,
       _id: "x",
