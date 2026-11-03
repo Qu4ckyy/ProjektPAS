@@ -15,6 +15,9 @@ export const TEST_DB = "pociag_test";
 export const SHORT_TTL_SECONDS = 2;
 
 const HOUR = 60 * 60 * 1000;
+
+/** Cena miejsca w kursach testowych (grosze). */
+export const TEST_PRICE = 8900;
 const WAGONS: Wagon[] = [
   { number: 1, seats: 20 },
   { number: 2, seats: 20 },
@@ -25,6 +28,7 @@ function testEvent(id: string, startsAt: Date): TrainEvent {
     _id: id,
     title: `TEST ${id}`,
     trainNumber: "TEST 1",
+    price: TEST_PRICE,
     from: "Testowo Główne",
     to: "Próbna Wschodnia",
     startsAt: startsAt.toISOString(),

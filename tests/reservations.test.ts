@@ -79,9 +79,12 @@ describe("createReservation", () => {
 
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(result.reservationId) });
     expect(Object.keys(doc ?? {}).sort()).toEqual(
-      ["_id", "active", "code", "createdAt", "customerName", "email", "eventId", "expiresAt", "seatId", "status"].sort(),
+      ["_id", "active", "amount", "code", "createdAt", "customerName", "email", "eventId", "expiresAt", "seatId", "status"].sort(),
     );
     expect(doc).toMatchObject({ eventId: FUTURE_EVENT._id, seatId: "2-14", status: "held", active: true, code: null });
+    // Cena zapisana w chwili rezerwacji (CONTRACT.md §2, Z29).
+    expect(doc!.amount).toBe(FUTURE_EVENT.price);
+    expect(result.amount).toBe(FUTURE_EVENT.price);
     expect(doc!.expiresAt.getTime() - doc!.createdAt.getTime()).toBe(120_000);
     expect(result.expiresAt.getTime()).toBeGreaterThanOrEqual(before + 120_000);
   });
