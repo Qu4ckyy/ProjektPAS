@@ -212,7 +212,7 @@ function ReservationForm({ event, seatId }: { event: TrainEvent; seatId: string 
 
       <form onSubmit={onSubmit} noValidate className="space-y-4 rounded-xl border border-neutral-200 bg-white p-5">
         <p className="text-sm text-neutral-600">
-          Po rezerwacji trzymamy miejsce przez kilka minut. W tym czasie kupisz bilet jednym kliknięciem.
+          Po rezerwacji trzymamy miejsce przez kilka minut. W tym czasie zapłacisz kartą na bezpiecznej stronie Stripe.
         </p>
 
         <Field
