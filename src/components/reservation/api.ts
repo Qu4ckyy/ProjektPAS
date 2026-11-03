@@ -3,7 +3,7 @@ import type { ApiError } from "@/lib/types";
 
 export type ApiResult<T> =
   | { kind: "ok"; status: number; data: T }
-  | { kind: "error"; status: number; error: ApiError }
+  | { kind: "error"; status: number; error: ApiError; retryAfterSeconds?: number }
   | { kind: "network" };
 
 const GENERIC_ERROR: ApiError = {
@@ -29,7 +29,13 @@ export async function apiFetch<T>(url: string, init?: RequestInit): Promise<ApiR
 
   if (res.ok) return { kind: "ok", status: res.status, data: body as T };
   const error = isApiError(body) ? body : GENERIC_ERROR;
-  return { kind: "error", status: res.status, error };
+  const retryAfter = Number(res.headers.get("retry-after"));
+  return {
+    kind: "error",
+    status: res.status,
+    error,
+    ...(Number.isFinite(retryAfter) && retryAfter > 0 ? { retryAfterSeconds: Math.ceil(retryAfter) } : {}),
+  };
 }
 
 function isApiError(body: unknown): body is ApiError {

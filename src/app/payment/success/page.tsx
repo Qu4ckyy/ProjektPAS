@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { PaymentReturn } from "@/components/payment/PaymentReturn";
+import { PaymentSuccess } from "@/components/payment/PaymentSuccess";
 
 export const metadata: Metadata = { title: "Płatność w toku" };
 
@@ -13,7 +13,7 @@ export default function PaymentSuccessPage() {
         </p>
       }
     >
-      <PaymentReturn mode="success" />
+      <PaymentSuccess />
     </Suspense>
   );
 }

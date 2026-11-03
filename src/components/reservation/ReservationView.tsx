@@ -1,5 +1,5 @@
 "use client";
-// /reservations/:param — reservationId → licznik i zakup (karta B + C); kod → bilet (karta C).
+// /reservations/:param — reservationId → licznik i „Zapłać” (Stripe Checkout); kod → bilet.
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { apiFetch, NETWORK_MESSAGE } from "@/components/reservation/api";
@@ -122,6 +122,7 @@ export function ReservationView({ param }: { param: string }) {
             receivedAt={state.receivedAt}
             onExpired={onExpired}
             onNotFound={onNotFound}
+            onAlreadyPaid={() => void load()}
           />
         </div>
       );

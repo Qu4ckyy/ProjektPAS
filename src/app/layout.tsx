@@ -25,7 +25,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         </header>
         <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-6">{children}</main>
         <footer className="border-t border-neutral-200 py-4 text-center text-xs text-neutral-500 print:hidden">
-          {COMPANY_NAME} · bilet zawsze na całą trasę · płatność online w kolejnym etapie
+          {COMPANY_NAME} · bilet zawsze na całą trasę · płatności obsługuje Stripe (tryb testowy)
         </footer>
       </body>
     </html>

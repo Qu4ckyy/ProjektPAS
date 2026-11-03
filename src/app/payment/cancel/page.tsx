@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { PaymentReturn } from "@/components/payment/PaymentReturn";
+import { PaymentCancel } from "@/components/payment/PaymentCancel";
 
 export const metadata: Metadata = { title: "Płatność przerwana" };
 
@@ -13,7 +13,7 @@ export default function PaymentCancelPage() {
         </p>
       }
     >
-      <PaymentReturn mode="cancel" />
+      <PaymentCancel />
     </Suspense>
   );
 }
