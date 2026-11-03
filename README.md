@@ -28,16 +28,15 @@ Indeksy kolekcji `reservations` zakłada samo pierwsze połączenie (i `npm run 
 | `npm run attack -- <URL> [--slow --ttl 120]` | atak na API wg CONTRACT.md §7 (Mateusz) |
 | `npm run reset -- --yes` | czyści rezerwacje i wgrywa kursy od nowa (`--prod` dla bazy `pociag`) |
 
-## Kto co robi
+## Kto co zrobił (Etap I)
 
-| Osoba | Karta | Branch |
+| Osoba | Karta | PR |
 |---|---|---|
-| Mateusz (lider) | szkielet, frontend kart B + C, nazwa i logo, atak i wdrożenie | `feature/skeleton`, `feature/card-bc-frontend`, `feature/attack` |
-| Kamil | A: rozkład jazdy i mapa wagonu (backend + frontend) | `feature/card-a-events` |
-| Eryk | B + C backend: rezerwacja, zakup, wygasanie, testy | `feature/card-bc-reservations` |
+| Mateusz (lider) | szkielet, frontend kart B + C, nazwa i logo, atak i wdrożenie | #1, #4, #5, #6 |
+| Kamil | A: rozkład jazdy i mapa wagonu (backend + frontend) | #2 |
+| Eryk | B + C backend: rezerwacja, zakup, wygasanie, testy | #3 |
 
 Pliki i ich właściciele: CONTRACT.md §6. Edytujesz tylko swoje — zmiana w cudzym pliku idzie przez lidera.
-Pliki, które są jeszcze zaślepkami, mają na górze komentarz `// STUB — implementuje <Imię>`.
 
 ## Zasady
 
