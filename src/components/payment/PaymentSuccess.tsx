@@ -3,7 +3,7 @@
 // Bilet pokazujemy WYŁĄCZNIE przy status "paid" z serwera — nigdy na podstawie samego adresu powrotu (Z30).
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
-import { usePaymentStatus } from "@/components/payment/usePaymentStatus";
+import { isPaymentPending, usePaymentStatus } from "@/components/payment/usePaymentStatus";
 import { mapAction, Notice, TIMETABLE_ACTION } from "@/components/reservation/Notice";
 import { TripSummary } from "@/components/reservation/TripSummary";
 import { formatPrice } from "@/lib/format";
@@ -38,7 +38,8 @@ export function PaymentSuccess() {
     );
   }
 
-  if (state.kind === "loaded" && state.reservation.status === "expired") {
+  // „expired” tuż po czasie nie jest jeszcze ostateczne — spóźniony webhook może wystawić bilet (D8).
+  if (state.kind === "loaded" && state.reservation.status === "expired" && !isPaymentPending(state.reservation)) {
     const { reservation } = state;
     return (
       <Shell title="Rezerwacja wygasła">

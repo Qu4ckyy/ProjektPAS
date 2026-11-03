@@ -1,12 +1,16 @@
-// Czyści rezerwacje i wgrywa kursy od nowa — przed demem, po ataku (Z19).
+// Czyści rezerwacje, log zdarzeń Stripe i liczniki limitu, wgrywa kursy od nowa — przed demem, po ataku (Z19).
 // Użycie: npm run reset -- --yes          (baza z MONGODB_DB w .env.local)
 //         npm run reset -- --yes --prod   (wymagane dla bazy produkcyjnej "pociag")
 // deleteMany, NIE drop(): drop() kasuje też indeksy, w tym unikalny indeks chroniący przed
-// podwójną rezerwacją (Z1), a działający serwer zakłada je tylko raz na połączenie.
+// podwójną rezerwacją (Z1), a działający serwer zakłada je tylko raz na połączenie. To samo dotyczy
+// indeksu TTL w rate_limits (bez niego liczniki przestałyby same wygasać).
+// Uwaga: płatność za sesję Stripe, której rezerwacja zniknęła z bazy, nie dostaje automatycznego zwrotu
+// — nie resetuj, gdy ktoś jest w trakcie płatności (skrypt ostrzega).
 import { config } from "dotenv";
 import { sampleEvents } from "../src/data/events";
-import { closeDb, ensureIndexes, getDb, RESERVATIONS_COLLECTION } from "../src/lib/db";
+import { closeDb, ensureIndexes, getDb, RESERVATIONS_COLLECTION, STRIPE_EVENTS_COLLECTION } from "../src/lib/db";
 import { EVENTS_COLLECTION } from "../src/lib/events";
+import { RATE_LIMITS_COLLECTION } from "../src/lib/rateLimit";
 import type { TrainEvent } from "../src/lib/types";
 
 config({ path: ".env.local", quiet: true });
@@ -29,8 +33,25 @@ async function main() {
     return;
   }
 
+  // Sesje Stripe żyją 24 h: nieopłacona rezerwacja z sesją może jeszcze zostać opłacona.
+  const openPayments = await db.collection(RESERVATIONS_COLLECTION).countDocuments({
+    status: { $ne: "paid" },
+    "payment.sessionId": { $exists: true },
+    createdAt: { $gt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+  });
+  if (openPayments > 0) {
+    console.log(
+      `UWAGA: ${openPayments} nieopłaconych rezerwacji z otwartą sesją Stripe (< 24 h). ` +
+        "Jeśli ktoś je teraz opłaci, nie dostanie automatycznego zwrotu — zwróć ręcznie w panelu Stripe.",
+    );
+  }
+
   const { deletedCount } = await db.collection(RESERVATIONS_COLLECTION).deleteMany({});
   console.log(`Usunięte rezerwacje: ${deletedCount}`);
+  const stripeEvents = await db.collection(STRIPE_EVENTS_COLLECTION).deleteMany({});
+  console.log(`Usunięte zdarzenia Stripe (log): ${stripeEvents.deletedCount}`);
+  const rateLimits = await db.collection(RATE_LIMITS_COLLECTION).deleteMany({});
+  console.log(`Usunięte liczniki limitu ruchu: ${rateLimits.deletedCount}`);
 
   await ensureIndexes(db);
   console.log("Indeksy rezerwacji: OK");

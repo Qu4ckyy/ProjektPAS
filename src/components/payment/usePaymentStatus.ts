@@ -8,6 +8,19 @@ import { RESERVATION_ID_REGEX, type ReservationResponse } from "@/lib/types";
 export const POLL_INTERVAL_MS = 2_000;
 export const POLL_TIMEOUT_MS = 60_000;
 
+/**
+ * Webhook może przyjąć płatność do 10 s po expiresAt (CONTRACT.md D8), a dociera z opóźnieniem.
+ * Przez ten czas „expired” z GET nie jest jeszcze ostateczne — czekamy dalej, zamiast obiecywać zwrot.
+ */
+export const EXPIRY_SETTLE_MS = 20_000;
+
+/** Czy płatność może się jeszcze potwierdzić (held albo wygasła przed chwilą — wg zegara serwera). */
+export function isPaymentPending(reservation: ReservationResponse): boolean {
+  if (reservation.status === "held") return true;
+  if (reservation.status !== "expired") return false;
+  return Date.parse(reservation.serverNow) - Date.parse(reservation.expiresAt) < EXPIRY_SETTLE_MS;
+}
+
 export type PaymentStatusState =
   | { kind: "loading" }
   | { kind: "notFound" }
@@ -41,7 +54,7 @@ export function usePaymentStatus(reservationId: string, { poll }: Options) {
     if (!alive.current) return;
     setState(next);
     // setTimeout zamiast setInterval: następne pytanie dopiero po odpowiedzi na poprzednie.
-    const waiting = next.kind === "loaded" ? next.reservation.status === "held" : next.kind === "error";
+    const waiting = next.kind === "loaded" ? isPaymentPending(next.reservation) : next.kind === "error";
     if (!poll || !waiting) return;
     if (Date.now() - startedAt.current >= POLL_TIMEOUT_MS) {
       setTimedOut(true);
