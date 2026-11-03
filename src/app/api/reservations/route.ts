@@ -30,5 +30,6 @@ export const POST = withErrorHandling("POST /api/reservations", async (req: Requ
     expiresAt: result.expiresAt.toISOString(),
     amount: result.amount,
   };
-  return NextResponse.json(res, { status: 201, headers: NO_STORE });
+  // Powtórka identycznego żądania → 200 z tą samą rezerwacją, nowa → 201 (D6, Z22).
+  return NextResponse.json(res, { status: result.replay ? 200 : 201, headers: NO_STORE });
 });

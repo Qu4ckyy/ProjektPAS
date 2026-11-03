@@ -1,5 +1,6 @@
 // Wspólne dane i narzędzia testów: kursy testowe w pociag_test, wywołania handlerów.
 import type { Collection } from "mongodb";
+import type Stripe from "stripe";
 import { GET as getEventRoute } from "@/app/api/events/[id]/route";
 import { GET as getReservationRoute } from "@/app/api/reservations/[id]/route";
 import { POST as purchaseRoute } from "@/app/api/reservations/[id]/purchase/route";
@@ -7,6 +8,7 @@ import { POST as createRoute } from "@/app/api/reservations/route";
 import { GET as getTicketRoute } from "@/app/api/tickets/[code]/route";
 import { getDb, RESERVATIONS_COLLECTION } from "@/lib/db";
 import { EVENTS_COLLECTION } from "@/lib/events";
+import { acceptPayment } from "@/lib/payments";
 import type { Reservation, TrainEvent, Wagon } from "@/lib/types";
 
 export const TEST_DB = "pociag_test";
@@ -88,6 +90,31 @@ export function validBody(overrides: Record<string, unknown> = {}): Record<strin
     email: `jan${customerCounter}@example.com`,
     ...overrides,
   };
+}
+
+/** Opłacona sesja Stripe Checkout tej rezerwacji, tak jak przychodzi w webhooku. */
+export function paidSession(
+  reservationId: string,
+  overrides: Partial<Stripe.Checkout.Session> = {},
+): Stripe.Checkout.Session {
+  return {
+    id: `cs_test_${reservationId}`,
+    object: "checkout.session",
+    client_reference_id: reservationId,
+    metadata: { reservationId },
+    amount_total: TEST_PRICE,
+    currency: "pln",
+    payment_status: "paid",
+    payment_intent: `pi_test_${reservationId}`,
+    ...overrides,
+  } as Stripe.Checkout.Session;
+}
+
+/** Opłaca rezerwację z pominięciem Stripe, tą samą funkcją co webhook. Zwraca kod biletu. */
+export async function payReservation(reservationId: string): Promise<string> {
+  const code = await acceptPayment(paidSession(reservationId), Date.now());
+  if (!code) throw new Error(`Opłacenie ${reservationId} nie powiodło się.`);
+  return code;
 }
 
 // --- Wywołania handlerów jak z sieci ---

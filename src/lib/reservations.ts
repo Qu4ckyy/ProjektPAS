@@ -1,10 +1,10 @@
-// Rezerwacja, zakup i wygasanie miejsc — CONTRACT.md §2, §3, §7. Właściciel: Eryk.
+// Rezerwacja i wygasanie miejsc — CONTRACT.md §2, §3, §7. Właściciel: Eryk. Płatność: src/lib/payments.ts.
 // Funkcje zwracają { ok: false, error } dla błędów biznesowych; wyjątek = błąd infrastruktury (→ 500).
-import { randomBytes } from "node:crypto";
-import { MongoServerError, ObjectId, type Collection } from "mongodb";
+import { ObjectId, type Collection } from "mongodb";
 import { getReservationTtlSeconds } from "@/lib/config";
-import { getDb, RESERVATIONS_COLLECTION } from "@/lib/db";
+import { getDb, isDuplicateKeyError, RESERVATIONS_COLLECTION } from "@/lib/db";
 import { getEvent, hasDeparted } from "@/lib/events";
+import { syncCheckoutSession } from "@/lib/payments";
 import { isReservationId, normalizeTicketCode } from "@/lib/validation";
 import type {
   CreateReservationBody,
@@ -29,39 +29,15 @@ export const RESERVATION_ERRORS = {
 } as const satisfies Partial<Record<ErrorCode, { status: number; message: string }>>;
 
 export type CreateReservationResult =
-  | { ok: true; reservationId: string; expiresAt: Date; amount: number }
+  /** replay: identyczne żądanie trafiło w istniejącą rezerwację tej samej osoby (D6) → 200 zamiast 201. */
+  | { ok: true; replay: boolean; reservationId: string; expiresAt: Date; amount: number }
   | { ok: false; error: "EVENT_NOT_FOUND" | "INVALID_SEAT" | "EVENT_DEPARTED" | "SEAT_TAKEN" };
 
-export type PurchaseResult =
-  | { ok: true; code: string }
-  | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" };
-
-/** Alfabet kodu: 32 znaki bez 0, 1, I, O (CONTRACT.md §2). */
-export const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-/** Ile razy losujemy nowy kod przy kolizji unikalnego indeksu (32^8 kombinacji — praktycznie nigdy). */
-const MAX_CODE_ATTEMPTS = 5;
+/** Insert → blokada → ponowny insert: blokująca rezerwacja może wygasnąć tuż przed nami. */
+const MAX_INSERT_ATTEMPTS = 3;
 
 async function reservationsCollection(): Promise<Collection<Reservation>> {
   return (await getDb()).collection<Reservation>(RESERVATIONS_COLLECTION);
-}
-
-function isDuplicateKeyError(err: unknown): boolean {
-  return err instanceof MongoServerError && err.code === 11000;
-}
-
-/**
- * Kod biletu XXXX-XXXX z crypto.randomBytes (Z10). 256 % 32 == 0, więc byte & 31
- * daje równy rozkład — bez modulo bias.
- */
-export function generateCode(): string {
-  const bytes = randomBytes(8);
-  let code = "";
-  for (let i = 0; i < bytes.length; i++) {
-    if (i === 4) code += "-";
-    code += CODE_ALPHABET[bytes[i] & 31];
-  }
-  return code;
 }
 
 /**
@@ -100,9 +76,10 @@ export async function getTakenSeats(eventId: string): Promise<string[]> {
 }
 
 /**
- * Rezerwacja miejsca. Input po validateReservationBody (stringi, trim, limity).
- * Przed podwójną rezerwacją chroni unikalny indeks — przy 50 równoległych żądaniach
- * dokładnie jeden insert przechodzi, reszta dostaje E11000 → SEAT_TAKEN (Z1).
+ * Rezerwacja miejsca. Input po validateReservationBody (stringi, trim, e-mail małymi literami).
+ * Przed podwójną rezerwacją chroni unikalny indeks: przy równoległych żądaniach dokładnie jeden
+ * insert przechodzi, reszta dostaje E11000 (Z1) i sprawdza, czyja jest blokująca rezerwacja:
+ * tej samej osoby → ta sama rezerwacja (D6, Z22), kogoś innego → SEAT_TAKEN.
  */
 export async function createReservation(input: CreateReservationBody): Promise<CreateReservationResult> {
   const { eventId, seatId, customerName, email } = input;
@@ -115,10 +92,9 @@ export async function createReservation(input: CreateReservationBody): Promise<C
   const reservations = await reservationsCollection();
   await releaseExpired(event._id, seatId);
 
-  // Druga próba tylko wtedy, gdy blokująca rezerwacja wygasła między releaseExpired a insertem.
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < MAX_INSERT_ATTEMPTS; attempt++) {
     const createdAt = new Date();
-    // Nie dłużej niż do odjazdu (CONTRACT.md §2, Z21) — po odjeździe zakup daje 410.
+    // Nie dłużej niż do odjazdu (CONTRACT.md §2, Z21) — po odjeździe płatność daje zwrot.
     const expiresAt = new Date(
       Math.min(createdAt.getTime() + getReservationTtlSeconds() * 1000, new Date(event.startsAt).getTime()),
     );
@@ -137,61 +113,49 @@ export async function createReservation(input: CreateReservationBody): Promise<C
     };
     try {
       await reservations.insertOne(doc);
-      return { ok: true, reservationId: doc._id.toHexString(), expiresAt, amount: doc.amount };
+      return { ok: true, replay: false, reservationId: doc._id.toHexString(), expiresAt, amount: doc.amount };
     } catch (err) {
       if (!isDuplicateKeyError(err)) throw err;
-      if (attempt > 0 || (await releaseExpired(event._id, seatId)) === 0) break;
     }
+
+    const holder = await reservations.findOne({ eventId: event._id, seatId, active: true });
+    if (!holder) continue; // Zwolniona między insertem a odczytem.
+    if (holder.status !== "paid" && holder.expiresAt <= new Date()) {
+      await releaseExpired(event._id, seatId);
+      continue;
+    }
+    if (holder.customerName === customerName && holder.email.toLowerCase() === email.toLowerCase()) {
+      return {
+        ok: true,
+        replay: true,
+        reservationId: holder._id.toHexString(),
+        expiresAt: holder.expiresAt,
+        amount: holder.amount,
+      };
+    }
+    return { ok: false, error: "SEAT_TAKEN" };
   }
   return { ok: false, error: "SEAT_TAKEN" };
 }
 
 /**
- * Zakup rezerwacji — atomowy findOneAndUpdate z warunkiem expiresAt > teraz (Z3).
- * Ponowny lub równoległy zakup tej samej rezerwacji → ten sam kod (Z4). Body nie jest czytane.
+ * GET /api/reservations/:id — bez e-maila (Z11), status wyliczony względem teraz. Gdy rezerwacja
+ * czeka na płatność, pyta Stripe o sesję — strona powrotu nie czeka na spóźniony webhook (Z31).
  */
-export async function purchaseReservation(id: string): Promise<PurchaseResult> {
-  if (!isReservationId(id)) return { ok: false, error: "RESERVATION_NOT_FOUND" };
-  const _id = new ObjectId(id);
-  const reservations = await reservationsCollection();
-  const now = new Date();
-
-  for (let attempt = 0; attempt < MAX_CODE_ATTEMPTS; attempt++) {
-    try {
-      const purchased = await reservations.findOneAndUpdate(
-        { _id, status: "held", active: true, expiresAt: { $gt: now } },
-        { $set: { status: "paid", code: generateCode(), paidAt: now } },
-        { returnDocument: "after", projection: { code: 1 } },
-      );
-      if (purchased?.code) return { ok: true, code: purchased.code };
-      break;
-    } catch (err) {
-      // Kolizja kodu z unikalnym indeksem — losujemy nowy.
-      if (!isDuplicateKeyError(err) || attempt === MAX_CODE_ATTEMPTS - 1) throw err;
-    }
-  }
-
-  // Nie trafiło: rezerwacji nie ma, jest już kupiona albo wygasła. Najpierw oznaczamy wygasłą
-  // (warunkowo — mogła zostać kupiona w międzyczasie), potem czytamy stan końcowy, żeby dwa
-  // równoległe żądania nigdy nie dostały sprzecznych odpowiedzi.
-  await reservations.updateOne(
-    { _id, status: "held", active: true, expiresAt: { $lte: now } },
-    { $set: { status: "expired", active: false } },
-  );
-  const current = await reservations.findOne({ _id }, { projection: { status: 1, code: 1 } });
-  if (!current) return { ok: false, error: "RESERVATION_NOT_FOUND" };
-  if (current.status === "paid" && current.code) return { ok: true, code: current.code };
-  return { ok: false, error: "RESERVATION_EXPIRED" };
-}
-
-/** GET /api/reservations/:id — bez e-maila (Z11), status wyliczony względem teraz. */
 export async function getReservation(id: string): Promise<ReservationResponse | null> {
   if (!isReservationId(id)) return null;
   const reservations = await reservationsCollection();
-  const doc = await reservations.findOne({ _id: new ObjectId(id) }, { projection: { email: 0 } });
+  const _id = new ObjectId(id);
+  let doc = await reservations.findOne({ _id }, { projection: { email: 0 } });
   if (!doc) return null;
   const event = await getEvent(doc.eventId);
   if (!event) return null;
+
+  if (doc.status === "held" && doc.payment?.sessionId && doc.expiresAt > new Date()) {
+    if (await syncCheckoutSession(id, doc.payment.sessionId)) {
+      doc = (await reservations.findOne({ _id }, { projection: { email: 0 } })) ?? doc;
+    }
+  }
 
   const now = new Date();
   const status = doc.status === "held" && doc.expiresAt <= now ? "expired" : doc.status;
@@ -210,7 +174,7 @@ export async function getReservation(id: string): Promise<ReservationResponse | 
   };
 }
 
-/** GET /api/tickets/:code — tylko kupione bilety; pokazuje imię, bez e-maila (Z11). */
+/** GET /api/tickets/:code — tylko opłacone bilety; pokazuje imię, bez e-maila (Z11). */
 export async function getTicketByCode(code: string): Promise<TicketResponse | null> {
   const normalized = normalizeTicketCode(code);
   if (!normalized) return null;
@@ -257,7 +221,7 @@ export type CheckoutCandidate =
   | { ok: true; reservation: Reservation; event: TrainEvent }
   | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "ALREADY_PAID" };
 
-// STUB — dopracowuje Eryk. Rezerwacja, którą można opłacić: held i jeszcze ważna.
+/** Rezerwacja, którą można opłacić: held i jeszcze ważna. Pełny dokument — checkout potrzebuje e-maila i payment. */
 export async function getCheckoutCandidate(id: string): Promise<CheckoutCandidate> {
   if (!isReservationId(id)) return { ok: false, error: "RESERVATION_NOT_FOUND" };
   const reservations = await reservationsCollection();
@@ -272,7 +236,10 @@ export async function getCheckoutCandidate(id: string): Promise<CheckoutCandidat
   return { ok: true, reservation, event };
 }
 
-// STUB — dopracowuje Eryk. Zapisuje sesję Stripe tylko dla held bez sesji (§6).
+/**
+ * Zapisuje sesję Stripe atomowo i tylko raz: rezerwacja held bez sesji (§6). Przy równoległych
+ * „Zapłać” wygrywa pierwszy zapis, a klucz idempotencji daje wszystkim tę samą sesję (D9).
+ */
 export async function saveCheckoutSession(id: string, session: { sessionId: string; url: string }): Promise<void> {
   if (!isReservationId(id)) return;
   const reservations = await reservationsCollection();
