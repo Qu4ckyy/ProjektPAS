@@ -13,7 +13,7 @@ export function TicketView({ ticket }: { ticket: TicketResponse }) {
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 print:hidden">
-        <p className="font-semibold">Bilet kupiony. Szczęśliwej podróży!</p>
+        <p className="font-semibold">Bilet opłacony. Szczęśliwej podróży!</p>
         <p className="text-sm">Zachowaj kod — pokażesz go konduktorowi. Ten adres możesz zapisać lub wydrukować.</p>
       </div>
 
