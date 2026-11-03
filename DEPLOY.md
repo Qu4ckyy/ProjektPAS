@@ -70,6 +70,8 @@ node scripts/attack.mjs https://<adres>.vercel.app --slow
 
 Wynik lokalny (TTL 20 s, prawdziwy klucz testowy Stripe): **55/55 PASS** z `--slow --webhook-secret` (A1, A2, B1–B5, C1–C4, Z6, Z11, Z12, Z27–Z30).
 
+Wynik na produkcji (3 listopada 2026, `68136cf`): **43/43 PASS** szybki przebieg (B5: podrobione nagłówki IP dostają 429 — Vercel nadpisuje je sam) i **45/45 PASS** z `--slow --skip-b5` (A2 1,7 s, B4 1,9 s, C2 5× jeden właściciel, C4 410). Uwaga: przebieg `--slow` czekał 897 s, czyli produkcja miała wtedy TTL 900, a nie 120 — sprawdź `RESERVATION_TTL_SECONDS` przed testem CEO.
+
 ## 6. Test kart (ręcznie, na produkcji, po skonfigurowaniu webhooka)
 
 | Krok | Oczekiwane | Lokalnie (bez webhooka, przez synchronizację GET) |
