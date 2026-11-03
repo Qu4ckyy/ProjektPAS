@@ -6,6 +6,15 @@ export function jsonError(status: number, error: ErrorCode, message: string) {
   return NextResponse.json({ error, message }, { status });
 }
 
+/** 429 z nagłówkiem Retry-After (CONTRACT.md §3, D7). */
+export function rateLimited(retryAfterSeconds: number) {
+  const seconds = Math.max(1, Math.ceil(retryAfterSeconds));
+  return NextResponse.json(
+    { error: "RATE_LIMITED", message: `Za dużo żądań. Spróbuj ponownie za ${seconds} s.` },
+    { status: 429, headers: { "Retry-After": String(seconds) } },
+  );
+}
+
 export function internalError(err: unknown, context: string) {
   // Szczegóły tylko w logach serwera — nigdy w odpowiedzi (Z12).
   console.error(`[${context}]`, err);

@@ -2,6 +2,7 @@
 import { ObjectId } from "mongodb";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { closeDb } from "@/lib/db";
+import { purchaseReservation } from "@/lib/reservations";
 import { TICKET_CODE_REGEX } from "@/lib/types";
 import {
   apiCreate,
@@ -15,6 +16,7 @@ import {
   resetTestData,
   setTtl,
   SHORT_TTL_SECONDS,
+  TEST_PRICE,
   validBody,
   waitForExpiry,
   type ApiResult,
@@ -43,10 +45,11 @@ async function reserve(seatId: string): Promise<string> {
   return (res.body as { reservationId: string }).reservationId;
 }
 
+/** Opłacenie rezerwacji z pominięciem Stripe (wewnętrzna funkcja; HTTP wymaga płatności — D5). */
 async function buy(id: string): Promise<string> {
-  const res = await apiPurchase(id);
-  expect(res.status, res.text).toBe(200);
-  return (res.body as { code: string }).code;
+  const result = await purchaseReservation(id);
+  if (!result.ok) throw new Error(`Opłacenie ${id} nie powiodło się: ${result.error}`);
+  return result.code;
 }
 
 beforeAll(resetTestData);
@@ -65,7 +68,8 @@ describe("POST /api/reservations", () => {
     const res = await apiCreate(validBody({ seatId: "2-14" }));
 
     expect(res.status).toBe(201);
-    expect(Object.keys(res.body as object).sort()).toEqual(["expiresAt", "reservationId"]);
+    expect(Object.keys(res.body as object).sort()).toEqual(["amount", "expiresAt", "reservationId"]);
+    expect((res.body as { amount: number }).amount).toBe(TEST_PRICE);
     const body = res.body as { reservationId: string; expiresAt: string };
     expect(body.reservationId).toMatch(HEX_ID);
     expectIso(body.expiresAt);
@@ -79,7 +83,7 @@ describe("POST /api/reservations", () => {
     const json = JSON.stringify(
       validBody({
         seatId: "2-15",
-        status: "purchased",
+        status: "paid",
         active: false,
         code: "AAAA-AAAA",
         expiresAt: "2099-01-01T00:00:00.000Z",
@@ -176,35 +180,38 @@ describe("POST /api/reservations", () => {
   });
 });
 
-describe("POST /api/reservations/:id/purchase", () => {
-  it("200 { code } — dokładnie to pole, format XXXX-XXXX", async () => {
+describe("POST /api/reservations/:id/purchase (zgodność z Etapem I, D5)", () => {
+  it("held → 402 PAYMENT_REQUIRED i nic się nie zmienia — biletu bez płatności nie ma", async () => {
     const id = await reserve("1-1");
-    const res = await apiPurchase(id);
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ code: expect.stringMatching(TICKET_CODE_REGEX) });
-    expect(res.headers.get("cache-control")).toBe("no-store");
+    expectError(await apiPurchase(id), 402, "PAYMENT_REQUIRED");
+    const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
+    expect(doc).toMatchObject({ status: "held", code: null });
   });
 
   it("ignoruje body (także śmieciowe i z polami do podmiany)", async () => {
     const id = await reserve("1-2");
-    const res = await apiPurchase(id, JSON.stringify({ code: "AAAA-AAAA", status: "held", eventId: "x" }));
+    expectError(await apiPurchase(id, JSON.stringify({ code: "AAAA-AAAA", status: "paid" })), 402, "PAYMENT_REQUIRED");
+    const code = await buy(id);
+    const res = await apiPurchase(id, "nie-json");
     expect(res.status).toBe(200);
-    const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
-    expect(doc).toMatchObject({ status: "purchased", code: (res.body as { code: string }).code, eventId: FUTURE_EVENT._id });
-    expect((await apiPurchase(id, "nie-json")).status).toBe(200);
+    expect(res.body).toEqual({ code });
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("Z4: ponowny zakup → 200 z tym samym kodem", async () => {
+  it("opłacona: ponownie → 200 z tym samym kodem", async () => {
     const id = await reserve("1-3");
     const code = await buy(id);
-    expect(await buy(id)).toBe(code);
+    expect(code).toMatch(TICKET_CODE_REGEX);
+    expect((await apiPurchase(id)).body).toEqual({ code });
+    expect((await apiPurchase(id)).body).toEqual({ code });
   });
 
-  it("Z4: 10 równoległych zakupów → 10× 200 z jednym kodem", async () => {
+  it("opłacona: 10 równoległych → 10× 200 z jednym kodem", async () => {
     const id = await reserve("1-4");
+    const code = await buy(id);
     const results = await Promise.all(Array.from({ length: 10 }, () => apiPurchase(id)));
     expect(results.map((r) => r.status)).toEqual(Array(10).fill(200));
-    expect(new Set(results.map((r) => (r.body as { code: string }).code)).size).toBe(1);
+    expect(new Set(results.map((r) => (r.body as { code: string }).code))).toEqual(new Set([code]));
   });
 
   it("Z3: zakup po TTL → 410 RESERVATION_EXPIRED, miejsce wraca do puli", async () => {
@@ -229,7 +236,7 @@ describe("POST /api/reservations/:id/purchase", () => {
     expect((await apiGetEvent(FUTURE_EVENT._id)).body).toMatchObject({ takenSeats: ["1-6"] });
     expectError(await apiCreate(validBody({ seatId: "1-6" })), 409, "SEAT_TAKEN");
     expect(await buy(id)).toBe(code);
-    expect((await apiGetReservation(id)).body).toMatchObject({ status: "purchased", code });
+    expect((await apiGetReservation(id)).body).toMatchObject({ status: "paid", code });
   });
 
   it.each([
@@ -254,7 +261,7 @@ describe("GET /api/reservations/:id", () => {
     const res = await apiGetReservation(id);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body as object).sort()).toEqual(
-      ["customerName", "event", "eventId", "expiresAt", "reservationId", "seatId", "serverNow", "status"].sort(),
+      ["amount", "customerName", "event", "eventId", "expiresAt", "reservationId", "seatId", "serverNow", "status"].sort(),
     );
     expect(res.body).toMatchObject({ reservationId: id, eventId: FUTURE_EVENT._id, seatId: "2-1", status: "held" });
     expect((res.body as { event: unknown }).event).toEqual(FUTURE_EVENT);
@@ -268,11 +275,11 @@ describe("GET /api/reservations/:id", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
-  it("purchased: status purchased i code", async () => {
+  it("paid: status paid i code", async () => {
     const id = await reserve("2-2");
     const code = await buy(id);
     const res = await apiGetReservation(id);
-    expect(res.body).toMatchObject({ status: "purchased", code });
+    expect(res.body).toMatchObject({ status: "paid", code });
     expect(res.text).not.toContain("@example.com");
   });
 
@@ -302,10 +309,10 @@ describe("GET /api/tickets/:code", () => {
     for (const variant of [code, code.toLowerCase(), ` ${code} `]) {
       const res = await apiGetTicket(variant);
       expect(res.status).toBe(200);
-      expect(Object.keys(res.body as object).sort()).toEqual(["code", "customerName", "event", "purchasedAt", "seatId"]);
+      expect(Object.keys(res.body as object).sort()).toEqual(["amount", "code", "customerName", "event", "paidAt", "seatId"]);
       expect(res.body).toMatchObject({ code, seatId: "2-4" });
       expect((res.body as { event: unknown }).event).toEqual(FUTURE_EVENT);
-      expectIso((res.body as { purchasedAt: string }).purchasedAt);
+      expectIso((res.body as { paidAt: string }).paidAt);
       expect(res.text).not.toContain("email");
       expect(res.text).not.toContain("@example.com");
     }

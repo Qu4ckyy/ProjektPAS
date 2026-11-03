@@ -35,6 +35,13 @@ export function formatDuration(startsAt: string | Date, arrivesAt: string | Date
   return m === 0 ? `${h} godz.` : `${h} godz. ${m} min`;
 }
 
+const priceFormatter = new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN" });
+
+/** Grosze → "89,00 zł". */
+export function formatPrice(grosze: number): string {
+  return priceFormatter.format(grosze / 100);
+}
+
 /** Licznik "14:32" z liczby sekund. */
 export function formatCountdown(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));

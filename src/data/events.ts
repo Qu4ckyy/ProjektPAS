@@ -1,4 +1,4 @@
-// Dane przykładowe: 3 kursy, 2 wagony × 20 miejsc (CONTRACT.md §2). Właściciel: Kamil. Wgrywa je npm run seed.
+// Dane przykładowe: 3 kursy, 2 wagony × 20 miejsc, ceny w groszach (CONTRACT.md §2, D4). Właściciel: Kamil. Wgrywa je npm run seed.
 import type { TrainEvent, Wagon } from "@/lib/types";
 
 const WAGONS: Wagon[] = [
@@ -16,6 +16,7 @@ export const sampleEvents: TrainEvent[] = [
     _id: "ic-1500-2026-12-04",
     title: "IC 1500 Warszawa Centralna → Kraków Główny",
     trainNumber: "IC 1500",
+    price: 8900, // 89,00 zł
     from: "Warszawa Centralna",
     to: "Kraków Główny",
     startsAt: "2026-12-04T07:15:00.000Z",
@@ -27,6 +28,7 @@ export const sampleEvents: TrainEvent[] = [
     _id: "eip-5300-2026-12-04",
     title: "EIP 5300 Gdańsk Główny → Warszawa Centralna",
     trainNumber: "EIP 5300",
+    price: 12900, // 129,00 zł
     from: "Gdańsk Główny",
     to: "Warszawa Centralna",
     startsAt: "2026-12-04T13:05:00.000Z",
@@ -38,6 +40,7 @@ export const sampleEvents: TrainEvent[] = [
     _id: "tlk-3820-2026-12-05",
     title: "TLK 3820 Wrocław Główny → Poznań Główny",
     trainNumber: "TLK 3820",
+    price: 5900, // 59,00 zł
     from: "Wrocław Główny",
     to: "Poznań Główny",
     startsAt: "2026-12-05T16:30:00.000Z",

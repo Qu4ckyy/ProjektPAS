@@ -12,6 +12,7 @@ import type {
   Reservation,
   ReservationResponse,
   TicketResponse,
+  TrainEvent,
 } from "@/lib/types";
 
 /** Status HTTP i komunikat dla każdego błędu biznesowego (CONTRACT.md §3, §4). */
@@ -23,10 +24,12 @@ export const RESERVATION_ERRORS = {
   RESERVATION_NOT_FOUND: { status: 404, message: "Nie znaleziono rezerwacji." },
   RESERVATION_EXPIRED: { status: 410, message: "Rezerwacja wygasła, miejsce wróciło do puli." },
   TICKET_NOT_FOUND: { status: 404, message: "Nie znaleziono biletu." },
+  ALREADY_PAID: { status: 409, message: "Ta rezerwacja jest już opłacona." },
+  PAYMENT_REQUIRED: { status: 402, message: "Bilet trzeba najpierw opłacić." },
 } as const satisfies Partial<Record<ErrorCode, { status: number; message: string }>>;
 
 export type CreateReservationResult =
-  | { ok: true; reservationId: string; expiresAt: Date }
+  | { ok: true; reservationId: string; expiresAt: Date; amount: number }
   | { ok: false; error: "EVENT_NOT_FOUND" | "INVALID_SEAT" | "EVENT_DEPARTED" | "SEAT_TAKEN" };
 
 export type PurchaseResult =
@@ -91,7 +94,7 @@ export async function getTakenSeats(eventId: string): Promise<string[]> {
   const seats = await reservations.distinct("seatId", {
     eventId,
     active: true,
-    $or: [{ status: "purchased" }, { expiresAt: { $gt: new Date() } }],
+    $or: [{ status: "paid" }, { expiresAt: { $gt: new Date() } }],
   });
   return seats.sort();
 }
@@ -125,6 +128,7 @@ export async function createReservation(input: CreateReservationBody): Promise<C
       seatId,
       customerName,
       email,
+      amount: event.price,
       code: null,
       status: "held",
       active: true,
@@ -133,7 +137,7 @@ export async function createReservation(input: CreateReservationBody): Promise<C
     };
     try {
       await reservations.insertOne(doc);
-      return { ok: true, reservationId: doc._id.toHexString(), expiresAt };
+      return { ok: true, reservationId: doc._id.toHexString(), expiresAt, amount: doc.amount };
     } catch (err) {
       if (!isDuplicateKeyError(err)) throw err;
       if (attempt > 0 || (await releaseExpired(event._id, seatId)) === 0) break;
@@ -156,7 +160,7 @@ export async function purchaseReservation(id: string): Promise<PurchaseResult> {
     try {
       const purchased = await reservations.findOneAndUpdate(
         { _id, status: "held", active: true, expiresAt: { $gt: now } },
-        { $set: { status: "purchased", code: generateCode(), purchasedAt: now } },
+        { $set: { status: "paid", code: generateCode(), paidAt: now } },
         { returnDocument: "after", projection: { code: 1 } },
       );
       if (purchased?.code) return { ok: true, code: purchased.code };
@@ -176,7 +180,7 @@ export async function purchaseReservation(id: string): Promise<PurchaseResult> {
   );
   const current = await reservations.findOne({ _id }, { projection: { status: 1, code: 1 } });
   if (!current) return { ok: false, error: "RESERVATION_NOT_FOUND" };
-  if (current.status === "purchased" && current.code) return { ok: true, code: current.code };
+  if (current.status === "paid" && current.code) return { ok: true, code: current.code };
   return { ok: false, error: "RESERVATION_EXPIRED" };
 }
 
@@ -198,9 +202,10 @@ export async function getReservation(id: string): Promise<ReservationResponse | 
     seatId: doc.seatId,
     customerName: doc.customerName,
     status,
+    amount: doc.amount ?? event.price,
     expiresAt: doc.expiresAt.toISOString(),
     serverNow: now.toISOString(),
-    ...(status === "purchased" && doc.code ? { code: doc.code } : {}),
+    ...(status === "paid" && doc.code ? { code: doc.code } : {}),
     event,
   };
 }
@@ -211,7 +216,7 @@ export async function getTicketByCode(code: string): Promise<TicketResponse | nu
   if (!normalized) return null;
   const reservations = await reservationsCollection();
   const doc = await reservations.findOne(
-    { code: normalized, status: "purchased" },
+    { code: normalized, status: "paid" },
     { projection: { email: 0 } },
   );
   if (!doc?.code) return null;
@@ -222,7 +227,57 @@ export async function getTicketByCode(code: string): Promise<TicketResponse | nu
     code: doc.code,
     seatId: doc.seatId,
     customerName: doc.customerName,
-    purchasedAt: (doc.purchasedAt ?? doc.createdAt).toISOString(),
+    amount: doc.amount ?? event.price,
+    paidAt: (doc.paidAt ?? doc.createdAt).toISOString(),
     event,
   };
+}
+
+// --- Etap II: płatności (CONTRACT.md §3, §6) ---
+
+export type LegacyPurchaseResult =
+  | { ok: true; code: string }
+  | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "PAYMENT_REQUIRED" };
+
+/**
+ * POST /api/reservations/:id/purchase po Etapie II (D5): bilet tylko dla opłaconej rezerwacji.
+ * Nie zmienia stanu — biletu bez płatności nie da się już dostać.
+ */
+export async function getLegacyPurchase(id: string): Promise<LegacyPurchaseResult> {
+  if (!isReservationId(id)) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  const reservations = await reservationsCollection();
+  const doc = await reservations.findOne({ _id: new ObjectId(id) }, { projection: { status: 1, code: 1, expiresAt: 1 } });
+  if (!doc) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  if (doc.status === "paid" && doc.code) return { ok: true, code: doc.code };
+  if (doc.status === "expired" || doc.expiresAt <= new Date()) return { ok: false, error: "RESERVATION_EXPIRED" };
+  return { ok: false, error: "PAYMENT_REQUIRED" };
+}
+
+export type CheckoutCandidate =
+  | { ok: true; reservation: Reservation; event: TrainEvent }
+  | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "ALREADY_PAID" };
+
+// STUB — dopracowuje Eryk. Rezerwacja, którą można opłacić: held i jeszcze ważna.
+export async function getCheckoutCandidate(id: string): Promise<CheckoutCandidate> {
+  if (!isReservationId(id)) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  const reservations = await reservationsCollection();
+  const reservation = await reservations.findOne({ _id: new ObjectId(id) });
+  if (!reservation) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  if (reservation.status === "paid") return { ok: false, error: "ALREADY_PAID" };
+  if (reservation.status === "expired" || reservation.expiresAt <= new Date()) {
+    return { ok: false, error: "RESERVATION_EXPIRED" };
+  }
+  const event = await getEvent(reservation.eventId);
+  if (!event) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  return { ok: true, reservation, event };
+}
+
+// STUB — dopracowuje Eryk. Zapisuje sesję Stripe tylko dla held bez sesji (§6).
+export async function saveCheckoutSession(id: string, session: { sessionId: string; url: string }): Promise<void> {
+  if (!isReservationId(id)) return;
+  const reservations = await reservationsCollection();
+  await reservations.updateOne(
+    { _id: new ObjectId(id), status: "held", "payment.sessionId": { $exists: false } },
+    { $set: { payment: { sessionId: session.sessionId, url: session.url, createdAt: new Date() } } },
+  );
 }

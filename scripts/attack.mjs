@@ -183,7 +183,7 @@ async function main() {
   );
   check("Z11", "bilet nie zawiera e-maila", ticket.status === 200 && !ticket.text.includes(ATTACK_EMAIL));
   const purchased = await get(`/api/reservations/${reservationId}`);
-  check("API", "GET rezerwacji po zakupie → purchased i ten sam code", purchased.body?.status === "purchased" && purchased.body?.code === code);
+  check("API", "GET rezerwacji po zakupie → paid i ten sam code", purchased.body?.status === "paid" && purchased.body?.code === code);
 
   // Z5: kupione miejsce zostaje zajęte
   check("Z5", "kupione miejsce dalej w takenSeats", (await get(eventPath)).body?.takenSeats?.includes(seatRace));

@@ -49,7 +49,7 @@ export function ReservationView({ param }: { param: string }) {
       return setState(res.status === 404 ? { kind: "notFound" } : { kind: "loadError", message: res.error.message });
     }
     const reservation = res.data;
-    if (reservation.status === "purchased" && reservation.code) {
+    if (reservation.status === "paid" && reservation.code) {
       router.replace(`/reservations/${encodeURIComponent(reservation.code)}`);
       return;
     }

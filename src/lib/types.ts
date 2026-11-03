@@ -8,6 +8,7 @@ export type TrainEvent = {
   title: string;
   startsAt: string; // ISO 8601 UTC (odjazd)
   seats: string[];
+  price: number; // cena miejsca w groszach (np. 8900 = 89,00 zł)
   trainNumber: string;
   from: string;
   to: string;
@@ -15,7 +16,17 @@ export type TrainEvent = {
   wagons: Wagon[];
 };
 
-export type ReservationStatus = "held" | "purchased" | "expired";
+export type ReservationStatus = "held" | "paid" | "expired";
+
+export type RefundReason = "late" | "duplicate" | "amount_mismatch" | "not_held";
+
+export type ReservationPayment = {
+  sessionId: string; // Stripe Checkout Session, "cs_test_..."
+  url: string;
+  createdAt: Date;
+  paymentIntentId?: string;
+  refunds?: { sessionId: string; refundId: string | null; reason: RefundReason; at: Date }[];
+};
 
 export type Reservation = {
   _id: ObjectId;
@@ -23,12 +34,14 @@ export type Reservation = {
   seatId: string;
   customerName: string;
   email: string;
+  amount: number; // grosze, zapisane w chwili rezerwacji
   code: string | null;
   status: ReservationStatus;
   active: boolean;
   createdAt: Date;
   expiresAt: Date;
-  purchasedAt?: Date;
+  paidAt?: Date;
+  payment?: ReservationPayment;
 };
 
 // --- Body i odpowiedzi API (§3) ---
@@ -42,7 +55,9 @@ export type CreateReservationBody = {
 
 export type EventDetailsResponse = { event: TrainEvent; takenSeats: string[] };
 
-export type CreateReservationResponse = { reservationId: string; expiresAt: string };
+export type CreateReservationResponse = { reservationId: string; expiresAt: string; amount: number };
+
+export type CheckoutResponse = { url: string };
 
 export type PurchaseResponse = { code: string };
 
@@ -52,6 +67,7 @@ export type ReservationResponse = {
   seatId: string;
   customerName: string;
   status: ReservationStatus;
+  amount: number;
   expiresAt: string;
   serverNow: string;
   code?: string;
@@ -62,7 +78,8 @@ export type TicketResponse = {
   code: string;
   seatId: string;
   customerName: string;
-  purchasedAt: string;
+  amount: number;
+  paidAt: string;
   event: TrainEvent;
 };
 
@@ -85,6 +102,11 @@ export type ErrorCode =
   | "RESERVATION_NOT_FOUND"
   | "RESERVATION_EXPIRED"
   | "TICKET_NOT_FOUND"
+  | "ALREADY_PAID"
+  | "PAYMENT_REQUIRED"
+  | "RATE_LIMITED"
+  | "INVALID_SIGNATURE"
+  | "PAYMENT_UNAVAILABLE"
   | "INTERNAL_ERROR";
 
 export type ApiError = { error: ErrorCode; message: string };

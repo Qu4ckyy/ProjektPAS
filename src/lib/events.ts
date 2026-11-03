@@ -12,6 +12,7 @@ const PROJECTION = {
   title: 1,
   startsAt: 1,
   seats: 1,
+  price: 1,
   trainNumber: 1,
   from: 1,
   to: 1,

@@ -72,16 +72,19 @@ describe("createReservation", () => {
     const result = await createReservation({
       ...input({ seatId: "2-14" }),
       // Pola spoza kontraktu nie mogą trafić do bazy.
-      ...({ status: "purchased", code: "AAAA-AAAA", active: false } as object),
+      ...({ status: "paid", code: "AAAA-AAAA", active: false } as object),
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(result.reservationId) });
     expect(Object.keys(doc ?? {}).sort()).toEqual(
-      ["_id", "active", "code", "createdAt", "customerName", "email", "eventId", "expiresAt", "seatId", "status"].sort(),
+      ["_id", "active", "amount", "code", "createdAt", "customerName", "email", "eventId", "expiresAt", "seatId", "status"].sort(),
     );
     expect(doc).toMatchObject({ eventId: FUTURE_EVENT._id, seatId: "2-14", status: "held", active: true, code: null });
+    // Cena zapisana w chwili rezerwacji (CONTRACT.md §2, Z29).
+    expect(doc!.amount).toBe(FUTURE_EVENT.price);
+    expect(result.amount).toBe(FUTURE_EVENT.price);
     expect(doc!.expiresAt.getTime() - doc!.createdAt.getTime()).toBe(120_000);
     expect(result.expiresAt.getTime()).toBeGreaterThanOrEqual(before + 120_000);
   });
@@ -163,14 +166,14 @@ describe("wygasanie (Z2)", () => {
 });
 
 describe("purchaseReservation", () => {
-  it("kupuje: zwraca kod w formacie XXXX-XXXX i zapisuje purchased", async () => {
+  it("kupuje: zwraca kod w formacie XXXX-XXXX i zapisuje paid", async () => {
     const id = await reserve("1-1");
     const result = await purchaseReservation(id);
     expect(result).toEqual({ ok: true, code: expect.stringMatching(TICKET_CODE_REGEX) });
 
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
-    expect(doc).toMatchObject({ status: "purchased", active: true, code: result.ok ? result.code : "" });
-    expect(doc!.purchasedAt).toBeInstanceOf(Date);
+    expect(doc).toMatchObject({ status: "paid", active: true, code: result.ok ? result.code : "" });
+    expect(doc!.paidAt).toBeInstanceOf(Date);
   });
 
   it("Z4: drugi zakup → ten sam kod", async () => {
@@ -275,8 +278,8 @@ describe("Z5: kupione miejsce nigdy nie wraca do puli", () => {
     expect(await purchaseReservation(id)).toEqual(purchase);
 
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
-    expect(doc).toMatchObject({ status: "purchased", active: true });
-    expect((await getReservation(id))?.status).toBe("purchased");
+    expect(doc).toMatchObject({ status: "paid", active: true });
+    expect((await getReservation(id))?.status).toBe("paid");
   });
 });
 
@@ -315,7 +318,7 @@ describe("getReservation i getTicketByCode", () => {
     expect(await (await reservationsCollection()).findOne({ _id: new ObjectId(id) })).toMatchObject({ status: "held" });
   });
 
-  it("purchased: kod w rezerwacji i bilet po kodzie (także małymi literami)", async () => {
+  it("paid: kod w rezerwacji i bilet po kodzie (także małymi literami)", async () => {
     const id = await reserve("1-13");
     const purchase = await purchaseReservation(id);
     if (!purchase.ok) throw new Error("zakup nie powiódł się");

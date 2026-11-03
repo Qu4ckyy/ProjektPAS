@@ -6,6 +6,7 @@ import { apiFetch, NETWORK_MESSAGE } from "@/components/reservation/api";
 import { type FieldErrors, type FormFields, validateFields } from "@/components/reservation/fields";
 import { mapAction, Notice, TIMETABLE_ACTION } from "@/components/reservation/Notice";
 import { TripSummary } from "@/components/reservation/TripSummary";
+import { formatPrice } from "@/lib/format";
 import { parseSeatId } from "@/lib/seats";
 import type { CreateReservationResponse, EventDetailsResponse, TrainEvent } from "@/lib/types";
 import { FIELD_LIMITS, validateReservationBody } from "@/lib/validation";
@@ -211,7 +212,7 @@ function ReservationForm({ event, seatId }: { event: TrainEvent; seatId: string 
 
       <form onSubmit={onSubmit} noValidate className="space-y-4 rounded-xl border border-neutral-200 bg-white p-5">
         <p className="text-sm text-neutral-600">
-          Po rezerwacji trzymamy miejsce przez kilka minut. W tym czasie kupisz bilet jednym kliknięciem.
+          Po rezerwacji trzymamy miejsce przez kilka minut. W tym czasie zapłacisz kartą na bezpiecznej stronie Stripe.
         </p>
 
         <Field
@@ -242,6 +243,11 @@ function ReservationForm({ event, seatId }: { event: TrainEvent; seatId: string 
             {outcome.message}
           </Notice>
         )}
+
+        <p className="text-sm text-neutral-700">
+          Cena miejsca: <strong className="text-neutral-900">{formatPrice(event.price)}</strong> — zapłacisz kartą po
+          rezerwacji.
+        </p>
 
         <button
           type="submit"
