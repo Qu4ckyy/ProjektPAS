@@ -1,25 +1,109 @@
-// Przejście do płatności Stripe Checkout — CONTRACT.md §3, D9, D10.
-// STUB — implementuje Kamil: sesja Stripe z kwotą z rezerwacji, idempotency key, APP_URL.
+// Przejście do płatności Stripe Checkout — CONTRACT.md §3, D9, D10, Z26, Z29, Z33, Z34. Właściciel: Kamil.
+import type Stripe from "stripe";
+import { formatDate, formatTime } from "@/lib/format";
 import { getCheckoutCandidate, saveCheckoutSession } from "@/lib/reservations";
+import { seatLabel } from "@/lib/seats";
+import { getStripe } from "@/lib/stripe";
+import type { Reservation, TrainEvent } from "@/lib/types";
 
 export type CreateCheckoutResult =
   | { ok: true; url: string }
   | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "ALREADY_PAID" | "PAYMENT_UNAVAILABLE" };
 
+/**
+ * APP_URL bez "/" na końcu (D10) — jedyne źródło adresów powrotu, nigdy nagłówek Host (Z33).
+ * Brak albo coś innego niż adres http(s) → null (płatności niedostępne).
+ */
 export function appUrl(): string | null {
-  const url = process.env.APP_URL?.trim().replace(/\/+$/, "");
-  return url ? url : null;
+  const raw = process.env.APP_URL?.trim().replace(/\/+$/, "");
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  } catch {
+    return null;
+  }
+  return raw;
 }
 
+/** Klucz idempotencji sesji — jedna sesja Stripe na rezerwację (D9). */
+export function checkoutIdempotencyKey(reservationId: string): string {
+  return `checkout-${reservationId}`;
+}
+
+/**
+ * Parametry sesji wyliczone WYŁĄCZNIE z rezerwacji i kursu: Stripe odrzuca ten sam idempotency key
+ * z innymi parametrami, więc żadnego Date.now() ani expires_at. Kwota tylko z bazy (Z29).
+ */
+export function buildSessionParams(
+  reservation: Reservation,
+  event: TrainEvent,
+  baseUrl: string,
+): Stripe.Checkout.SessionCreateParams {
+  const reservationId = reservation._id.toHexString();
+  const query = `reservationId=${encodeURIComponent(reservationId)}`;
+  return {
+    mode: "payment",
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: "pln",
+          unit_amount: reservation.amount,
+          product_data: {
+            name: event.title,
+            description: `${seatLabel(reservation.seatId)} · ${formatDate(event.startsAt)}, odjazd ${formatTime(event.startsAt)}`,
+          },
+        },
+      },
+    ],
+    client_reference_id: reservationId,
+    metadata: { reservationId, eventId: reservation.eventId, seatId: reservation.seatId },
+    customer_email: reservation.email,
+    locale: "pl",
+    success_url: `${baseUrl}/payment/success?${query}`,
+    cancel_url: `${baseUrl}/payment/cancel?${query}`,
+  };
+}
+
+/**
+ * POST /api/reservations/:id/checkout. Ponowne „Zapłać” zwraca zapisany url bez wołania Stripe;
+ * równoległe pierwsze kliknięcia dostają tę samą sesję dzięki kluczowi idempotencji (D9, Z4, Z26).
+ * Błąd Stripe → PAYMENT_UNAVAILABLE, rezerwacja nietknięta, szczegóły tylko w logach (Z34).
+ */
 export async function createCheckout(reservationId: string): Promise<CreateCheckoutResult> {
   const candidate = await getCheckoutCandidate(reservationId);
   if (!candidate.ok) return candidate;
-  if (candidate.reservation.payment?.url) return { ok: true, url: candidate.reservation.payment.url };
+  const { reservation, event } = candidate;
+  if (reservation.payment?.url) return { ok: true, url: reservation.payment.url };
 
   const base = appUrl();
-  if (!base) return { ok: false, error: "PAYMENT_UNAVAILABLE" };
-  // Zaślepka bez Stripe: od razu „strona powrotu”, żeby frontend miał dokąd przejść.
-  const url = `${base}/payment/success?reservationId=${encodeURIComponent(reservationId)}`;
-  await saveCheckoutSession(reservationId, { sessionId: `cs_stub_${reservationId}`, url });
-  return { ok: true, url };
+  if (!base) {
+    console.error("[checkout] Brak lub zły APP_URL — nie da się zbudować adresów powrotu ze Stripe.");
+    return { ok: false, error: "PAYMENT_UNAVAILABLE" };
+  }
+
+  const id = reservation._id.toHexString();
+  let session: Stripe.Checkout.Session;
+  try {
+    session = await getStripe().checkout.sessions.create(buildSessionParams(reservation, event, base), {
+      idempotencyKey: checkoutIdempotencyKey(id),
+    });
+  } catch (err) {
+    // PaymentUnavailableError (brak / zły klucz), StripeError (API, sieć, timeout) — klient dostaje 503.
+    console.error(`[checkout] Nie udało się utworzyć sesji Stripe dla ${id}:`, err);
+    // Równoległe „Zapłać” mogło w międzyczasie zapisać tę samą sesję (Stripe odpowiada 409 na
+    // jednoczesne żądania z jednym kluczem) — wtedy oddajemy jej url zamiast 503.
+    const again = await getCheckoutCandidate(id);
+    if (!again.ok) return again;
+    if (again.reservation.payment?.url) return { ok: true, url: again.reservation.payment.url };
+    return { ok: false, error: "PAYMENT_UNAVAILABLE" };
+  }
+  if (!session.url) {
+    console.error(`[checkout] Sesja Stripe ${session.id} bez url.`);
+    return { ok: false, error: "PAYMENT_UNAVAILABLE" };
+  }
+
+  await saveCheckoutSession(id, { sessionId: session.id, url: session.url });
+  return { ok: true, url: session.url };
 }

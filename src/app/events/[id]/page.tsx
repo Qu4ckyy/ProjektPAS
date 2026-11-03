@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SeatMap } from "@/components/events/SeatMap";
 import { getEvent, hasDeparted } from "@/lib/events";
-import { formatDate, formatDuration, formatTime } from "@/lib/format";
+import { formatDate, formatDuration, formatPrice, formatTime } from "@/lib/format";
 import { getTakenSeats } from "@/lib/reservations";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +41,9 @@ export default async function EventPage({ params, searchParams }: Props) {
         <p className="mt-1 text-neutral-600">
           {formatDate(event.startsAt)} · odjazd <strong>{formatTime(event.startsAt)}</strong> · przyjazd{" "}
           <strong>{formatTime(event.arrivesAt)}</strong> · {formatDuration(event.startsAt, event.arrivesAt)}
+        </p>
+        <p className="mt-1 text-neutral-600">
+          Cena miejsca: <strong className="text-neutral-900">{formatPrice(event.price)}</strong>
         </p>
       </header>
 
