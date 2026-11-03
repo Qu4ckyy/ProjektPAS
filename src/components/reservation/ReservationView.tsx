@@ -29,8 +29,6 @@ function parseParam(param: string): Target {
 export function ReservationView({ param }: { param: string }) {
   const router = useRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
-  const target = parseParam(param);
-  const targetKey = target ? `${target.kind}:${target.kind === "ticket" ? target.code : target.id}` : "none";
 
   const load = useCallback(async () => {
     const t = parseParam(param);
@@ -59,9 +57,7 @@ export function ReservationView({ param }: { param: string }) {
       return setState({ kind: "expired", eventId: reservation.eventId, reservation });
     }
     setState({ kind: "held", reservation, receivedAt });
-    // targetKey zamiast param: "abcd-efgh" i "ABCD-EFGH" to ten sam bilet.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetKey, router]);
+  }, [param, router]);
 
   useEffect(() => {
     void load();

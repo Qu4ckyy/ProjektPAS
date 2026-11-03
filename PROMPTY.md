@@ -3,7 +3,9 @@
 Kolejność i stan:
 1. ✅ **Mateusz — Prompt M1 (szkielet)** — PR #1.
 2. ✅ **Kamil — Prompt K** — PR #2. ✅ **Eryk — Prompt E** — PR #3.
-3. **Mateusz — Prompt M2 (frontend B + C + poprawki mapy Kamila)**, potem **Prompt M3 (poprawka backendu Eryka, spięcie, wdrożenie, atak)**.
+3. ✅ **Mateusz — Prompt M2 (frontend B + C + poprawki mapy Kamila)** — PR #5. ✅ **Prompt M3 (poprawka backendu Eryka, spięcie, wdrożenie, atak)** — PR #6.
+
+Etap I zamknięty w kodzie. Zostało wdrożenie według DEPLOY.md i demo według DEMO.md.
 
 Kamil i Eryk mają po jednym prompcie i już skończyli. Drobne poprawki w ich plikach po przeglądzie robi lider w M2 i M3 (CONTRACT.md §6, wyjątek dla lidera).
 
