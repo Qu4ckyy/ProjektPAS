@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatDuration, formatTime } from "@/lib/format";
+import { formatDuration, formatPrice, formatTime } from "@/lib/format";
 import { freeSeatsLabel } from "@/lib/seats";
 import type { TrainEvent } from "@/lib/types";
 
@@ -34,6 +34,7 @@ export function TimetableRow({ event, freeSeats, departed }: Props) {
       </div>
 
       <div className="text-sm font-medium sm:text-right">
+        <div className="text-lg font-bold tabular-nums text-neutral-900">{formatPrice(event.price)}</div>
         {departed ? (
           <span className="text-neutral-500">Odjechał</span>
         ) : soldOut ? (
