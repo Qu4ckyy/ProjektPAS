@@ -442,15 +442,32 @@ async function main() {
       retryAfterOk && floodRes.every((r) => r.status < 500),
       `${JSON.stringify(countBy(floodRes.map((r) => r.status)))} w ${tookMs} ms`,
     );
-    const spoofed = await reserve(
-      { eventId: E._id, seatId: secondClientSeat, ...client("B5-spoof") },
-      { expect429: true, headers: { "x-forwarded-for": "198.51.100.23", "x-real-ip": "198.51.100.23" } },
-    );
     if (IS_LOCAL) {
+      const spoofed = await reserve(
+        { eventId: E._id, seatId: secondClientSeat, ...client("B5-spoof") },
+        { expect429: true, headers: { "x-forwarded-for": "198.51.100.23", "x-real-ip": "198.51.100.23" } },
+      );
       check("B5", "drugi klient (lokalnie: inny x-forwarded-for) rezerwuje bez problemu", spoofed.status === 201, `${spoofed.status}`);
-      note("lokalnie nagłówki IP są zaufane — na produkcji sprawdź, że podrobiony x-forwarded-for NIE omija limitu.");
+      note("lokalnie nagłówki IP są zaufane — na produkcji skrypt sprawdza, że podrobione NIE omijają limitu.");
     } else {
-      check("B5", "podrobiony x-forwarded-for / x-real-ip nie omija limitu (Vercel ustawia je sam)", spoofed.status === 429, `${spoofed.status}`);
+      // Kubełek checkout i nieistniejąca rezerwacja: nic nie zajmujemy. Żądanie kontrolne (bez podrabiania)
+      // pokazuje, czy jesteśmy nadal w tym samym oknie — inaczej wynik nic nie mówi i powtarzamy.
+      let verdict = null;
+      for (let attempt = 0; attempt < 3 && !verdict; attempt++) {
+        await sleep(10_500);
+        await Promise.all(Array.from({ length: 45 }, () => checkout("abc", { expect429: true })));
+        const [spoof, control] = await Promise.all([
+          checkout("abc", { expect429: true, headers: { "x-forwarded-for": "198.51.100.23", "x-real-ip": "198.51.100.23" } }),
+          checkout("abc", { expect429: true }),
+        ]);
+        if (control.status === 429) verdict = { spoof: spoof.status };
+      }
+      check(
+        "B5",
+        "podrobiony x-forwarded-for / x-real-ip nie omija limitu (Vercel ustawia je sam)",
+        verdict !== null && verdict.spoof === 429,
+        verdict ? `podrobione → ${verdict.spoof}` : "okno limitu przełączało się w trakcie — brak wyniku",
+      );
       note("B5 „drugi klient z innej sieci” sprawdź ręcznie: zarezerwuj z telefonu na LTE w trakcie zalewania.");
     }
   } else {
