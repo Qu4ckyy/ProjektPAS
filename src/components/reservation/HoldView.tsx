@@ -1,12 +1,14 @@
 "use client";
 // Licznik „Trzymamy Twoje miejsce jeszcze 14:32” i przycisk „Zapłać 89,00 zł” (Etap II: Stripe Checkout).
 // Używa go ekran rezerwacji i /payment/cancel („Zapłać ponownie” — ten sam checkout, ten sam url, D9).
+// [E3] Pole „Użyj punktów” — STUB szkieletu: bez podpowiedzi salda; pełna wersja w M2 (CONTRACT.md §5).
 import { useEffect, useRef, useState } from "react";
 import { apiFetch, NETWORK_MESSAGE } from "@/components/reservation/api";
 import { Notice } from "@/components/reservation/Notice";
 import { TripSummary } from "@/components/reservation/TripSummary";
 import { useCountdown } from "@/components/reservation/useCountdown";
 import { formatCountdown, formatPrice } from "@/lib/format";
+import { formatPoints, maxPointsFor } from "@/lib/points";
 import type { CheckoutResponse, ReservationResponse } from "@/lib/types";
 
 type Props = {
@@ -31,6 +33,12 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound, onAlr
   const expired = secondsLeft <= 0;
   const lastMinute = secondsLeft <= 60;
   const minutesLeft = Math.ceil(secondsLeft / 60);
+  // Punkty ustalone przy pierwszym „Zapłać” są zablokowane (D16) — wtedy pole tylko do odczytu.
+  const lockedPoints = reservation.pointsUsed > 0 ? reservation.pointsUsed : null;
+  const [pointsInput, setPointsInput] = useState(lockedPoints ? String(lockedPoints) : "");
+  const points = lockedPoints ?? parsePoints(pointsInput);
+  const maxPoints = maxPointsFor(reservation.amount);
+  const toPay = reservation.amount - Math.min(points, maxPoints);
 
   async function pay() {
     // Ref chroni przed podwójnym kliknięciem, zanim React zablokuje przycisk (Z4).
@@ -40,7 +48,11 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound, onAlr
     setError(null);
     const res = await apiFetch<CheckoutResponse>(
       `/api/reservations/${encodeURIComponent(reservation.reservationId)}/checkout`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ points }),
+      },
     );
     if (res.kind === "ok") {
       // Przycisk zostaje zablokowany aż do przejścia na stronę płatności.
@@ -129,8 +141,30 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound, onAlr
           Rezerwacja na: <strong className="text-neutral-900">{reservation.customerName}</strong>
         </p>
         <p className="mt-1 text-sm text-neutral-600">
-          Do zapłaty: <strong className="text-neutral-900">{formatPrice(reservation.amount)}</strong>. Płatność
-          obsługuje Stripe — bilet z kodem dostaniesz zaraz po potwierdzeniu płatności.
+          Do zapłaty: <strong className="text-neutral-900">{formatPrice(toPay)}</strong>
+          {points > 0 && <> (w tym {formatPoints(points)} = {formatPrice(points)} punktami)</>}. Płatność obsługuje
+          Stripe — bilet z kodem dostaniesz zaraz po potwierdzeniu płatności.
+        </p>
+
+        <label className="mt-4 block text-sm font-medium text-neutral-800" htmlFor="points">
+          Użyj punktów
+        </label>
+        <input
+          id="points"
+          type="number"
+          inputMode="numeric"
+          min={0}
+          max={maxPoints}
+          step={1}
+          value={pointsInput}
+          readOnly={lockedPoints !== null}
+          onChange={(e) => setPointsInput(e.target.value)}
+          className="mt-1 w-40 rounded-lg border border-neutral-300 px-3 py-2 tabular-nums read-only:bg-neutral-100"
+        />
+        <p className="mt-1 text-xs text-neutral-500">
+          {lockedPoints !== null
+            ? "Punkty dla tej płatności są już ustalone."
+            : `Punktami zapłacisz najwyżej połowę ceny: ${formatPoints(maxPoints)}.`}
         </p>
 
         {error && (
@@ -153,7 +187,7 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound, onAlr
               ? `Spróbuj ponownie za ${cooldown} s`
               : error
                 ? "Spróbuj ponownie"
-                : (payLabel ?? `Zapłać ${formatPrice(reservation.amount)}`)}
+                : (payLabel ?? `Zapłać ${formatPrice(toPay)}`)}
         </button>
         <p className="mt-3 text-xs leading-relaxed text-neutral-500">
           Płatność obsługuje Stripe w trybie testowym — pieniądze nie są pobierane. Karta testowa: 4242 4242 4242
@@ -162,4 +196,10 @@ export function HoldView({ reservation, receivedAt, onExpired, onNotFound, onAlr
       </div>
     </div>
   );
+}
+
+/** Pole punktów → liczba całkowita ≥ 0; puste albo błędne → 0 (serwer i tak sprawdza, Z37). */
+function parsePoints(raw: string): number {
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : 0;
 }

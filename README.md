@@ -48,6 +48,19 @@ stripe listen --forward-to localhost:3000/api/webhooks/stripe
 
 Data ważności: dowolna przyszła, CVC: dowolne trzy cyfry. Bilet pojawia się dopiero po webhooku `checkout.session.completed`.
 
+## Punkty i maile lokalnie (Etap III)
+
+Punkty prowadzi Voucherify (Loyalty Hub, program „Konduktor punkty”), maile wysyła Resend. Obie usługi mają tryb lokalny, który niczego nie wysyła:
+
+| Zmienna | Lokalnie (domyślnie) | Prawdziwa usługa |
+|---|---|---|
+| `LOYALTY_PROVIDER` | `memory` — punkty w pamięci serwera, znikają po restarcie | `voucherify` (klucze od lidera) |
+| `MAIL_PROVIDER` | `log` — treść maila w konsoli serwera | `resend` (klucz od lidera) |
+
+- **Sandbox Voucherify przyjmuje 100 wywołań na godzinę na cały zespół.** Prawdziwy Voucherify włączaj tylko na krótkie sprawdzenie, nie odświeżaj strony w pętli i nie puszczaj na nim testów (testy same wymuszają `memory` i `log`).
+- **Resend bez własnej domeny** dostarcza tylko na adres właściciela konta i adresy testowe: `delivered@resend.dev` (doręczony), `bounced@resend.dev` (odrzucony), z dowolną etykietą po `+`, np. `delivered+jan@resend.dev`. Inny adres → mail „failed”, bilet działa normalnie.
+- Na Vercelu kod zawsze używa `voucherify` i `resend` — `memory` i `log` są tam ignorowane.
+
 ## Kto co zrobił (Etap I)
 
 | Osoba | Karta | PR |
