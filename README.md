@@ -2,7 +2,7 @@
 
 System rezerwacji miejsc w pociągach z płatnością Stripe (tryb testowy). Next.js 15 (App Router) + TypeScript + Tailwind + MongoDB Atlas + Stripe, wdrożenie na Vercel.
 
-**Źródło prawdy: [CONTRACT.md](CONTRACT.md).** Prompty dla agentów: [PROMPTY.md](PROMPTY.md). Wdrożenie: [DEPLOY.md](DEPLOY.md). Demo: [DEMO.md](DEMO.md).
+**Źródło prawdy: [CONTRACT.md](CONTRACT.md).** Prompty z wcześniejszych etapów: [PROMPTY-ETAP-1.md](PROMPTY-ETAP-1.md), [PROMPTY-ETAP-2.md](PROMPTY-ETAP-2.md). Wdrożenie: [DEPLOY.md](DEPLOY.md). Demo: [DEMO.md](DEMO.md).
 
 ## Uruchomienie
 
@@ -47,6 +47,19 @@ stripe listen --forward-to localhost:3000/api/webhooks/stripe
 | `4000 0025 0000 3155` | 3D Secure (dodatkowe potwierdzenie) |
 
 Data ważności: dowolna przyszła, CVC: dowolne trzy cyfry. Bilet pojawia się dopiero po webhooku `checkout.session.completed`.
+
+## Punkty i maile lokalnie (Etap III)
+
+Punkty prowadzi Voucherify (Loyalty Hub, program „Konduktor punkty”), maile wysyła Resend. Obie usługi mają tryb lokalny, który niczego nie wysyła:
+
+| Zmienna | Lokalnie (domyślnie) | Prawdziwa usługa |
+|---|---|---|
+| `LOYALTY_PROVIDER` | `memory` — punkty w pamięci serwera, znikają po restarcie | `voucherify` (klucze od lidera) |
+| `MAIL_PROVIDER` | `log` — treść maila w konsoli serwera | `resend` (klucz od lidera) |
+
+- **Sandbox Voucherify przyjmuje 100 wywołań na godzinę na cały zespół.** Prawdziwy Voucherify włączaj tylko na krótkie sprawdzenie, nie odświeżaj strony w pętli i nie puszczaj na nim testów (testy same wymuszają `memory` i `log`).
+- **Resend bez własnej domeny** dostarcza tylko na adres właściciela konta i adresy testowe: `delivered@resend.dev` (doręczony), `bounced@resend.dev` (odrzucony), z dowolną etykietą po `+`, np. `delivered+jan@resend.dev`. Inny adres → mail „failed”, bilet działa normalnie.
+- Na Vercelu kod zawsze używa `voucherify` i `resend` — `memory` i `log` są tam ignorowane.
 
 ## Kto co zrobił (Etap I)
 

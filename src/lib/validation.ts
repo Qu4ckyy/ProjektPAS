@@ -135,6 +135,21 @@ export function validateReservationBody(body: unknown): Validation<CreateReserva
   return { ok: true, value };
 }
 
+/**
+ * [E3] E-mail z query (GET /api/loyalty): ten sam regex i limit co w rezerwacji, po trim
+ * i małymi literami — to identyfikator klienta w Voucherify (D13).
+ */
+export function validateEmail(raw: unknown): Validation<string> {
+  if (typeof raw !== "string" || raw.trim() === "") {
+    return { ok: false, message: "Podaj adres e-mail." };
+  }
+  const email = raw.trim();
+  if (email.length > FIELD_LIMITS.email || !EMAIL_REGEX.test(email)) {
+    return { ok: false, message: "Nieprawidłowy adres e-mail." };
+  }
+  return { ok: true, value: email.toLowerCase() };
+}
+
 /** Czy :id z URL wygląda jak reservationId. Zły format → 404 bez zapytania do bazy (Z7). */
 export function isReservationId(id: unknown): id is string {
   return typeof id === "string" && RESERVATION_ID_PATTERN.test(id);

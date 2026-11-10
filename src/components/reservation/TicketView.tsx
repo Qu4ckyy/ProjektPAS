@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { COMPANY_NAME, Logo } from "@/components/brand/Logo";
 import { formatDate, formatDuration, formatPrice, formatTime } from "@/lib/format";
+import { formatPoints } from "@/lib/points";
 import { isWindow, parseSeatId } from "@/lib/seats";
 import type { TicketResponse } from "@/lib/types";
 
@@ -57,7 +58,14 @@ export function TicketView({ ticket }: { ticket: TicketResponse }) {
           <p className="text-xs font-medium tracking-wide text-neutral-500 uppercase">Kod biletu</p>
           <p className="mt-1 font-mono text-4xl font-bold tracking-[0.2em] text-neutral-900">{ticket.code}</p>
           <p className="mt-1 text-xs text-neutral-500">
-            Zapłacono {formatPrice(ticket.amount)} · {formatDate(ticket.paidAt)}, {formatTime(ticket.paidAt)}
+            Kartą {formatPrice(ticket.cardAmount)}
+            {ticket.pointsUsed > 0 && (
+              <>
+                {" "}
+                · punktami {formatPoints(ticket.pointsUsed)} ({formatPrice(ticket.pointsUsed)})
+              </>
+            )}{" "}
+            · zebrane punkty: {ticket.pointsEarned} · {formatDate(ticket.paidAt)}, {formatTime(ticket.paidAt)}
           </p>
         </div>
       </article>

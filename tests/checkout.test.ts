@@ -104,7 +104,7 @@ describe("POST /api/reservations/:id/checkout", () => {
     const res = await apiCheckout(id);
 
     expect(res.status, res.text).toBe(200);
-    expect(res.body).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_test_1" });
+    expect(res.body).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_test_1", pointsUsed: 0, cardAmount: TEST_PRICE });
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(create).toHaveBeenCalledTimes(1);
     const [params, options] = create.mock.calls[0];
@@ -122,7 +122,7 @@ describe("POST /api/reservations/:id/checkout", () => {
         },
       ],
       client_reference_id: id,
-      metadata: { reservationId: id, eventId: FUTURE_EVENT._id, seatId: expect.any(String) },
+      metadata: { reservationId: id, eventId: FUTURE_EVENT._id, seatId: expect.any(String), pointsUsed: "0" },
       customer_email: "anna@example.com",
       locale: "pl",
       success_url: `${APP_URL}/payment/success?reservationId=${id}`,

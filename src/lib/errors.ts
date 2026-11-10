@@ -1,9 +1,12 @@
 // Format błędów — CONTRACT.md §4.
 import { NextResponse } from "next/server";
-import type { ErrorCode } from "@/lib/types";
+import type { ApiError, ErrorCode } from "@/lib/types";
 
-export function jsonError(status: number, error: ErrorCode, message: string) {
-  return NextResponse.json({ error, message }, { status });
+type ErrorExtra = Pick<ApiError, "maxPoints" | "balance" | "pointsUsed">;
+
+/** extra — dodatkowe pola odmów punktowych (CONTRACT.md §4 [E3]). */
+export function jsonError(status: number, error: ErrorCode, message: string, extra?: ErrorExtra) {
+  return NextResponse.json({ error, message, ...extra }, { status });
 }
 
 /** 429 z nagłówkiem Retry-After (CONTRACT.md §3, D7). */
