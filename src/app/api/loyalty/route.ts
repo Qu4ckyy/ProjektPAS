@@ -24,6 +24,6 @@ export const GET = withErrorHandling("GET /api/loyalty", async (req: Request) =>
   } catch (err) {
     if (!(err instanceof LoyaltyUnavailableError)) throw err;
     console.error("[loyalty] Voucherify niedostępny:", err);
-    return jsonError(503, "LOYALTY_UNAVAILABLE", "Punkty chwilowo nie działają. Spróbuj za chwilę.");
+    return jsonError(503, "LOYALTY_UNAVAILABLE", "Punkty chwilowo nie działają. Możesz zapłacić bez punktów.");
   }
 });

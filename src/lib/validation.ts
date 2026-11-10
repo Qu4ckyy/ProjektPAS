@@ -97,6 +97,11 @@ export async function readJsonBody(req: Request, maxBytes: number = MAX_BODY_BYT
   }
 }
 
+/** Klient = e-mail po trim i małymi literami (D13). Ten sam wzór w rezerwacji, saldzie i Voucherify (Z52). */
+export function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 /**
  * Body POST /api/reservations. Każde pole musi być stringiem (typeof — blokuje {"$ne": null}),
  * po trim niepuste i w limicie długości. Zwraca tylko 4 znane pola — reszta jest ignorowana.
@@ -131,7 +136,7 @@ export function validateReservationBody(body: unknown): Validation<CreateReserva
   if (!EMAIL_REGEX.test(value.email)) {
     return { ok: false, message: "Nieprawidłowy adres e-mail." };
   }
-  value.email = value.email.toLowerCase();
+  value.email = normalizeEmail(value.email);
   return { ok: true, value };
 }
 
@@ -147,7 +152,7 @@ export function validateEmail(raw: unknown): Validation<string> {
   if (email.length > FIELD_LIMITS.email || !EMAIL_REGEX.test(email)) {
     return { ok: false, message: "Nieprawidłowy adres e-mail." };
   }
-  return { ok: true, value: email.toLowerCase() };
+  return { ok: true, value: normalizeEmail(email) };
 }
 
 /** Czy :id z URL wygląda jak reservationId. Zły format → 404 bez zapytania do bazy (Z7). */

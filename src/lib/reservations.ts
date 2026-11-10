@@ -3,8 +3,10 @@
 import { ObjectId, type Collection } from "mongodb";
 import { getReservationTtlSeconds } from "@/lib/config";
 import { getDb, isDuplicateKeyError, RESERVATIONS_COLLECTION } from "@/lib/db";
+import { runAfterResponse } from "@/lib/after";
 import { getEvent, hasDeparted } from "@/lib/events";
-import { settleLoyalty } from "@/lib/loyalty";
+import { earnForPurchase, settleLoyalty } from "@/lib/loyalty";
+import { sendTicketEmail } from "@/lib/mail";
 import { syncCheckoutSession } from "@/lib/payments";
 import { isReservationId, normalizeTicketCode } from "@/lib/validation";
 import type {
@@ -36,6 +38,9 @@ export type CreateReservationResult =
 
 /** Insert → blokada → ponowny insert: blokująca rezerwacja może wygasnąć tuż przed nami. */
 const MAX_INSERT_ATTEMPTS = 3;
+
+/** [E3] Pobranie punktów w pending dłużej niż tyle = przerwane (padła funkcja), można je przejąć (§2). */
+const STALE_SPEND_MS = 2 * 60_000;
 
 async function reservationsCollection(): Promise<Collection<Reservation>> {
   return (await getDb()).collection<Reservation>(RESERVATIONS_COLLECTION);
@@ -157,11 +162,18 @@ export async function getReservation(id: string): Promise<ReservationResponse | 
       doc = (await reservations.findOne({ _id }, { projection: { email: 0 } })) ?? doc;
     }
   }
-  // [E3] Punkty pobrane za rezerwację, która przepadła, wracają na kartę (D17).
-  // TODO(Eryk): ponowienie earn i maila w stanie retry (CONTRACT.md §3 [E3]).
+  // [E3] Punkty pobrane za rezerwację, która przepadła, wracają na kartę (D17). Zamknięcie od razu,
+  // Voucherify po odpowiedzi — klient widzi „wygasła”, a punkty wracają chwilę później.
   if (doc.loyalty?.spend?.status === "done" && doc.status !== "paid") {
     await settleLoyalty({ reservationId: id });
     doc = (await reservations.findOne({ _id }, { projection: { email: 0 } })) ?? doc;
+  }
+  // [E3] Zaległe naliczenie punktów i mail (Z54) — po odpowiedzi; zajęcie kroku wybiera jednego wykonawcę.
+  if (doc.status === "paid") {
+    const earn = doc.loyalty?.earn?.status;
+    if (earn === "retry" || earn === "pending") await runAfterResponse("reservations:earn", () => earnForPurchase(id));
+    const mail = doc.ticketEmail?.status;
+    if (mail === "retry" || mail === "sending") await runAfterResponse("reservations:mail", () => sendTicketEmail(id));
   }
 
   const now = new Date();
@@ -308,6 +320,8 @@ export type ClaimPointsSpendResult =
  * SPEND_IN_PROGRESS (czeka na url), z inną — POINTS_LOCKED (D16).
  */
 export async function claimPointsSpend(id: string, points: number): Promise<ClaimPointsSpendResult> {
+  // Walidację points (całkowita, ≤ połowa ceny) robi checkout; tu tylko bezpiecznik przed złym cardAmount.
+  if (!Number.isSafeInteger(points) || points <= 0) throw new Error(`claimPointsSpend: zła liczba punktów ${points}.`);
   if (!isReservationId(id)) return { ok: false, error: "RESERVATION_NOT_FOUND" };
   const reservations = await reservationsCollection();
   const _id = new ObjectId(id);
@@ -319,7 +333,12 @@ export async function claimPointsSpend(id: string, points: number): Promise<Clai
       active: true,
       expiresAt: { $gt: now },
       "payment.sessionId": { $exists: false },
-      $or: [{ "loyalty.spend": { $exists: false } }, { "loyalty.spend.status": { $in: ["retry", "failed"] } }],
+      $or: [
+        { "loyalty.spend": { $exists: false } },
+        { "loyalty.spend.status": { $in: ["retry", "failed"] } },
+        // Przerwane pobranie tej samej liczby punktów (Z54) — applyPoints najpierw sprawdzi po reason.
+        { "loyalty.spend.status": "pending", "loyalty.spend.at": { $lt: new Date(now.getTime() - STALE_SPEND_MS) }, pointsUsed: points },
+      ],
     },
     [
       {
