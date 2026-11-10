@@ -100,7 +100,8 @@ export async function acceptPayment(session: Stripe.Checkout.Session, confirmedA
             paidAt: new Date(),
             // [E3] Punkty za zakup od kwoty zapłaconej kartą (D18) — naliczenie po odpowiedzi.
             pointsEarned: pointsEarnedFor(session.amount_total),
-            "loyalty.earn": { status: "pending", points: pointsEarnedFor(session.amount_total), at: new Date(), attempts: 1 },
+            // attempts 0 = jeszcze nikt nie zaczął; earnForPurchase zajmuje krok (Z41).
+            "loyalty.earn": { status: "pending", points: pointsEarnedFor(session.amount_total), at: new Date(), attempts: 0 },
             // Sesja, która zapłaciła — po niej rozpoznajemy powtórkę i drugą płatność.
             "payment.sessionId": session.id,
             ...(paymentIntentId ? { "payment.paymentIntentId": paymentIntentId } : {}),
