@@ -1,199 +1,193 @@
-# PROMPTY.md — prompty dla agentów (Etap II, płatności Stripe)
+# PROMPTY.md — prompty dla agentów (Etap III, punkty lojalnościowe)
 
-Prompty Etapu I: [PROMPTY-ETAP-1.md](PROMPTY-ETAP-1.md).
+Prompty wcześniejszych etapów: [PROMPTY-ETAP-1.md](PROMPTY-ETAP-1.md), [PROMPTY-ETAP-2.md](PROMPTY-ETAP-2.md).
 
 Kolejność:
-1. ✅ **Mateusz — M1 (szkielet Etapu II + konto Stripe)** — PR #9.
-2. ✅ **Kamil — K2** — PR #11. ✅ **Eryk — E2** — PR #12. ✅ **Mateusz — M2** — PR #10.
-3. ✅ **Mateusz — M3 (spięcie, atak, demo)** — PR z `feature/e2-attack`. Zostaje konfiguracja Vercela i webhooka w panelu Stripe (DEPLOY.md §2–§3) i test kart na produkcji (§6).
+1. **Mateusz — M1 (szkielet Etapu III + konta Voucherify i Resend)** — wchodzi pierwszy.
+2. Równolegle: **Kamil — K3** (karta B: płatność punktami), **Eryk — E3** (karta A: konto punktowe), **Mateusz — M2** (karta C: mail + frontend punktów).
+3. **Mateusz — M3** (spięcie, Vercel, atak, demo) — po merge K3, E3 i M2.
 
-Każdy pracuje na świeżym `master` (`git checkout master && git pull`). W `.env.local` każdy ma: `MONGODB_URI`, własną `MONGODB_DB`, `STRIPE_SECRET_KEY` (testowy, od lidera), `STRIPE_WEBHOOK_SECRET` (z własnego `stripe listen`), `APP_URL=http://localhost:3000`. Kluczy nie wklejamy do czatu ani do repo.
-
-Stripe CLI (każdy, raz):
-
-```bash
-brew install stripe/stripe-cli/stripe
-```
-
-```bash
-stripe login
-```
+Każdy pracuje na świeżym `master` (`git checkout master && git pull`). W `.env.local` każdy ma to, co w Etapie II, plus `LOYALTY_PROVIDER=memory` i `MAIL_PROVIDER=log` — wtedy punkty żyją w pamięci serwera, a mail ląduje w konsoli. Prawdziwe Voucherify i Resend włączacie na krótko do sprawdzenia swojej karty (klucze od lidera): **sandbox Voucherify ma 100 wywołań na godzinę na cały zespół**, więc nie odświeżajcie strony w pętli i nie puszczajcie testów na prawdziwym API. Kluczy nie wklejamy do czatu ani do repo.
 
 ---
 
-## Prompt M1 — Mateusz: szkielet Etapu II
+## Prompt M1 — Mateusz: szkielet Etapu III
 
 ```
-Jestem liderem 3-osobowego zespołu w projekcie PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + MongoDB + Tailwind). Etap I działa i jest na produkcji. Etap II: płatność kartą przez Stripe Checkout (tryb testowy) zamiast „Kupuję bilet”. Oceniana jest NIEZAWODNOŚĆ.
-Przeczytaj CONTRACT.md w całości — to źródło prawdy, szczególnie §0 (decyzje), §2, §3, §6. Nie zmieniaj go bez pytania mnie.
-Pracuj na branchu feature/e2-skeleton z aktualnego master.
+Jestem liderem 3-osobowego zespołu w projekcie PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + MongoDB + Stripe). Etapy I i II działają na produkcji. Etap III: program lojalnościowy w Voucherify (punkty: 1000 na start, 10 pkt za każdy pełny złoty zapłacony kartą, punktami do połowy ceny, 1 pkt = 1 grosz) i mail z biletem przez Resend. Oceniana jest NIEZAWODNOŚĆ.
+Przeczytaj CONTRACT.md w całości — to źródło prawdy, szczególnie §0a (D12–D22), §2, §3 „Punkty — szczegóły”, §6, §7 Z36–Z54. Nie zmieniaj go bez pytania mnie.
+Pracuj na branchu feature/e3-skeleton z aktualnego master.
 
-ZADANIE: szkielet Etapu II, żeby Kamil (karta A: checkout + limit ruchu) i Eryk (karta B: webhook + backend karty C) mogli od razu pracować równolegle na zaślepkach. Mam wyjątek z §6: w szkielecie wolno mi ruszyć pliki wszystkich.
+ZADANIE: szkielet Etapu III, żeby Kamil (karta B), Eryk (karta A) i ja (karta C + frontend) mogli od razu pracować równolegle na zaślepkach. W szkielecie wolno mi ruszyć pliki wszystkich (§6). Bez nowych zależności w package.json (Voucherify i Resend przez fetch).
 
-1. Zależność: `npm install stripe` (najnowsza wersja). Nic więcej do package.json.
-2. Mechaniczna zmiana D1 w CAŁYM repo (src, tests, scripts): status "purchased" → "paid", pole purchasedAt → paidAt (także w odpowiedzi GET /api/tickets/:code). Tylko zmiana nazw, bez zmiany logiki. Po zmianie npm test musi przechodzić (baza z MONGODB_URI w .env.local, testy same biorą pociag_test).
-3. src/lib/types.ts: TrainEvent.price, Reservation.amount, paidAt, payment (dokładnie jak §2), ReservationStatus "held" | "paid" | "expired", CreateReservationResponse z amount, ReservationResponse z amount, TicketResponse z amount i paidAt, CheckoutResponse { url }, nowe ErrorCode z §4.
-4. src/lib/errors.ts: rateLimited(retryAfterSeconds) → 429 RATE_LIMITED z nagłówkiem Retry-After i komunikatem po polsku. src/lib/format.ts: formatPrice(grosze) → "89,00 zł" (Intl, pl-PL, PLN).
-5. Zaślepki z komentarzem `// STUB — implementuje <Imię>`, działające bez Stripe i bez kluczy:
-   - [Kamil] src/data/events.ts: dopisz price wg D4 (to dane, nie zaślepka — wpisz od razu). src/lib/events.ts: dodaj price do projekcji.
-   - [Kamil] src/lib/stripe.ts: getStripe() i klasa PaymentUnavailableError (zaślepka rzuca PaymentUnavailableError).
-   - [Kamil] src/lib/rateLimit.ts: rateLimit(req, bucket) → zawsze { ok: true }.
-   - [Kamil] src/lib/checkout.ts + POST /api/reservations/[id]/checkout/route.ts: woła getCheckoutCandidate i zwraca 200 { url: APP_URL + "/payment/success?reservationId=<id>" } (bez Stripe), błędy z kandydata → 404/410/409 wg §3.
-   - [Eryk] src/lib/reservations.ts: createReservation zapisuje amount = event.price i zwraca je; getCheckoutCandidate(id) i saveCheckoutSession(id, { sessionId, url }) wg §6 (prosta, poprawna wersja). GET /api/reservations/:id zwraca amount.
-   - [Eryk] POST /api/reservations/[id]/purchase: wg D5 (held → 402 PAYMENT_REQUIRED, paid → 200 { code }, expired → 410, zły id → 404). Funkcja purchaseReservation w src/lib zostaje na razie jako wewnętrzna (używają jej testy Etapu I); route jej już nie woła. Żadnych furtek do „darmowego” biletu.
-   - [Eryk] src/lib/payments.ts: handleStripeEvent(event) i syncCheckoutSession(reservationId) — zaślepki bez efektu. src/app/api/webhooks/stripe/route.ts: czyta surowe body (await req.text()), na razie zawsze 200 { received: true }.
-   - [Mateusz] src/app/payment/success/page.tsx i src/app/payment/cancel/page.tsx: proste strony czytające reservationId z URL (useSearchParams w <Suspense>) i pokazujące status z GET /api/reservations/:id.
-   - [Mateusz] HoldView: przycisk „Zapłać <formatPrice(amount)>” → POST checkout → window.location.assign(url). Licznik i reszta bez zmian.
-   - Wszystkie nowe route'y: export const dynamic = "force-dynamic", withErrorHandling, w Next 15 params to Promise.
-6. .env.example: nowe zmienne z §1 z komentarzami. README: sekcja „Stripe lokalnie” (stripe login, stripe listen --forward-to localhost:3000/api/webhooks/stripe, skąd wziąć whsec_, karty testowe 4242…, 4000 0000 0000 0002, 4000 0025 0000 3155).
-7. Aktualizuj istniejące testy tylko tam, gdzie zmieniła się nazwa statusu albo zachowanie route'u /purchase (testy na poziomie src/lib dalej wołają purchaseReservation; testy HTTP /purchase oczekują teraz 402 dla held). Nie kasuj scenariuszy Z1–Z5.
+1. src/lib/types.ts: pola Reservation z §2 (pointsUsed, cardAmount, pointsEarned, loyalty, ticketEmail, typ LoyaltyStep), LoyaltyMember, odpowiedzi API z §3 (ReservationResponse i TicketResponse z pointsUsed, cardAmount, pointsEarned; CheckoutResponse { url, pointsUsed, cardAmount }; LoyaltyResponse { email, points }; ReservationPointsResponse { balance, maxPoints, pointsUsed, locked }), nowe ErrorCode z §4 i dodatkowe pola odmów punktowych.
+2. src/lib/points.ts (mój): WELCOME_POINTS, POINTS_PER_ZLOTY, maxPointsFor, pointsEarnedFor, formatPoints — dokładnie jak §3, z testem tests/points.test.ts (8900 → max 4450; 7900 → 790; 4450 → 440; 99 → 0; 0 → 0).
+3. src/lib/errors.ts: helper do odmów punktowych z dodatkowym polem (np. jsonError z opcjonalnym extra).
+4. Zaślepki z komentarzem `// STUB — implementuje <Imię>`, działające bez kluczy:
+   - [Eryk] src/lib/voucherify.ts: interfejs LoyaltyClient, LoyaltyUnavailableError, getLoyaltyClient() z implementacją "memory" (Map w globalThis: e-mail → { memberId, balance, transakcje }) — wystarczająco dobrą do pracy innych; implementacja "voucherify" rzuca na razie LoyaltyUnavailableError. Odmowa "memory"/"log" przy VERCEL_ENV === "production" (D21).
+   - [Eryk] src/lib/loyalty.ts: wszystkie funkcje z §6 — prosta wersja na kliencie (getPoints → 1000 dla nowego e-maila, applyPoints → adjustBalance, settleLoyalty / earnForPurchase / runLoyaltyRetries → nic).
+   - [Eryk] GET /api/loyalty (walidacja e-maila, getPoints) i GET /api/cron/settle (sprawdza Authorization: Bearer CRON_SECRET → 401, potem runLoyaltyRetries + retryTicketEmails).
+   - [Eryk] reservations.ts: claimPointsSpend / finishPointsSpend (prosta poprawna wersja), saveCheckoutSession z nową sygnaturą, GET rezerwacji i biletu z pointsUsed/cardAmount/pointsEarned (brak pól → 0 / amount / null).
+   - [Eryk] payments.ts: acceptPayment porównuje kwotę z cardAmount ?? amount i zapisuje pointsEarned; po przyjęciu after(() => Promise.allSettled([earnForPurchase(id), sendTicketEmail(id)])).
+   - [Kamil] src/lib/spend.ts: spendPointsForCheckout — zaślepka: claimPointsSpend → applyPoints(−points) → finishPointsSpend("done"). checkout.ts: czyta body { points } (prosta walidacja), points > 0 → spend, sesja Stripe na cardAmount, odpowiedź { url, pointsUsed, cardAmount }. GET /api/reservations/[id]/points → { balance: getPoints(email), maxPoints, pointsUsed, locked }. rateLimit: kubełek "loyalty".
+   - [Mateusz] src/lib/mail.ts: sendTicketEmail z providerem "log" (console.log tematu i tekstu) i retryTicketEmails → 0.
+   - [Mateusz] HoldView: pole „Użyj punktów” (liczba, bez podpowiedzi) wysyłane w body checkoutu; bilet pokazuje pointsUsed i pointsEarned w jednej linii.
+   - Wszystkie nowe route'y: export const dynamic = "force-dynamic", withErrorHandling, params jako Promise.
+5. src/lib/db.ts: indeksy z §2 [E3] (reservations) i ensureIndexes dla loyalty_members (tylko _id — nic nie dodawaj).
+6. vercel.json: cron { "path": "/api/cron/settle", "schedule": "0 4 * * *" } (Hobby: raz dziennie).
+7. .env.example: zmienne [E3] z §1 z komentarzami. tests/setup-env.ts: LOYALTY_PROVIDER=memory, MAIL_PROVIDER=log. README: sekcja „Punkty i maile lokalnie” (memory/log, kiedy włączyć prawdziwe usługi, limit 100/h, adresy delivered@resend.dev i bounced@resend.dev).
+8. Istniejące testy zostają zielone; nie kasuj scenariuszy Etapów I–II.
 
-DEFINICJA "GOTOWE": npm run build, npm run lint, npm test zielone; npm run seed wgrywa ceny; przeklikanie: mapa → formularz (cena) → licznik → „Zapłać 89,00 zł” → /payment/success (zaślepka); curl każdego endpointu z §3 zwraca kształt z kontraktu (checkout bez Stripe).
+DEFINICJA "GOTOWE": npm run build, lint, test zielone; przeklikanie bez kluczy Voucherify/Resend: GET /api/loyalty?email=jan@example.com → { email, points: 1000 }; rezerwacja → „Użyj punktów” 1000 → „Zapłać” → strona Stripe na 79,00 zł → 4242 → bilet z „punktami 1000 pkt” i „zebrane punkty: 790”; w konsoli serwera log maila; GET /api/loyalty dla tego e-maila → 790 (memory: 1000 − 1000 + 790).
 Zanim zaczniesz, pokaż krótki plan. Małe commity (Conventional Commits), na koniec opis PR z listą plików i właścicieli.
 
-POZA KODEM (zrób sam w przeglądarce, agent tylko przypomina): konto Stripe w trybie testowym (nazwa firmy: Konduktor), zaproś Kamila i Eryka (rola Developer) oraz nauczyciela (rola View only / tylko odczyt), klucz sk_test_ przekaż zespołowi prywatnie (nie w repo, nie w czacie z agentem).
+POZA KODEM (zrób sam w przeglądarce, agent tylko przypomina):
+- Voucherify: konto (60 dni za darmo), projekt Sandbox, kampania lojalnościowa „Konduktor Punkty” bez reguł naliczania i bez wygasania punktów (punkty dodaje nasz kod), z Project settings → Application keys: API URL, Application ID, Secret Key; id kampanii (camp_…). Klucze zespołowi prywatnie.
+- Resend: konto na mój e-mail, API key z uprawnieniem „Sending access”. Bez domeny wysyła tylko na mój adres i adresy testowe.
+- Vercel: CRON_SECRET (losowy, np. openssl rand -hex 32).
 ```
 
 ---
 
-## Prompt K2 — Kamil: karta A (Checkout) + limit ruchu
+## Prompt K3 — Kamil: karta B (płatność punktami)
 
 ```
-Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + MongoDB + Stripe). Etap II: płatność przez Stripe Checkout w trybie testowym. Oceniana jest NIEZAWODNOŚĆ — CEO atakuje API.
-Przeczytaj CONTRACT.md w całości (szczególnie §0, §1, §2, §3, §6, §7 Z23, Z26, Z29, Z32–Z34). Nie zmieniaj kontraktu ani plików innych osób (§6) — jeśli trzeba, zatrzymaj się i napisz mi, co i dlaczego. Nie dodawaj zależności (stripe już jest).
-Pracuj na branchu feature/e2-checkout z aktualnego master. Szkielet ma zaślepki.
+Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + MongoDB + Stripe). Etap III: program lojalnościowy w Voucherify. Moja karta B: klient płaci częścią ceny punktami (do połowy ceny, 1 pkt = 1 grosz), resztę kartą przez Stripe. Oceniana jest NIEZAWODNOŚĆ — CEO atakuje API.
+Przeczytaj CONTRACT.md w całości (szczególnie §0a D15, D16, D20, D22, §2 pola lojalnościowe, §3 „Punkty — szczegóły” — kolejność checkoutu krok po kroku i „Pewność operacji”, §4, §6, §7 Z36–Z38, Z43–Z45, Z53). Nie zmieniaj kontraktu ani plików innych osób (§6) — jeśli trzeba, zatrzymaj się i napisz mi, co i dlaczego. Nie dodawaj zależności.
+Pracuj na branchu feature/e3-spend z aktualnego master. Szkielet ma zaślepki; funkcje Eryka (loyalty.ts, claimPointsSpend, finishPointsSpend, saveCheckoutSession) mają prostą poprawną wersję w pamięci (LOYALTY_PROVIDER=memory).
 
-MOJA KARTA: A — Checkout (cena, przejście do Stripe) + kryterium B5 (limit ruchu).
+MOJA KARTA: B — płatność punktami. Pliki: src/lib/checkout.ts, src/lib/spend.ts, src/app/api/reservations/[id]/checkout/**, src/app/api/reservations/[id]/points/**, src/lib/rateLimit.ts (kubełek "loyalty").
 
-1. Ceny: src/data/events.ts ma price (D4) — sprawdź, npm run seed je wgrywa (idempotentnie). Rozkład jazdy (/) i mapa (/events/:id): pokaż cenę miejsca przez formatPrice z src/lib/format.ts („89,00 zł”), np. w wierszu kursu i w nagłówku mapy.
-2. src/lib/stripe.ts: getStripe() — jeden klient Stripe na proces (globalThis), klucz z STRIPE_SECRET_KEY czytany przy pierwszym użyciu (nie przy buildzie). Brak klucza albo klucz, który nie zaczyna się od "sk_test_" → rzuć PaymentUnavailableError (D11, Z32). Ustaw maxNetworkRetries: 2 i timeout ~10 s. Nigdy nie loguj klucza.
-3. src/lib/checkout.ts + POST /api/reservations/[id]/checkout:
-   - najpierw rateLimit(req, "checkout") → 429 przez rateLimited(),
-   - zły id → 404; getCheckoutCandidate(id) (Eryk) → RESERVATION_NOT_FOUND 404 / RESERVATION_EXPIRED 410 / ALREADY_PAID 409,
-   - jeśli reservation.payment?.url istnieje → 200 { url } bez wołania Stripe (D9),
-   - inaczej stripe.checkout.sessions.create z idempotencyKey "checkout-<reservationId>": mode "payment", line_items z price_data { currency: "pln", unit_amount: reservation.amount, product_data { name: "IC 1500 Warszawa Centralna → Kraków Główny", description: "Wagon 2, miejsce 14 · pt., 4 grudnia 2026, odjazd 08:15" } }, quantity 1, client_reference_id = reservationId, metadata { reservationId, eventId, seatId }, customer_email, locale "pl", success_url / cancel_url z APP_URL wg §3 (D10 — NIGDY z nagłówka Host; brak APP_URL → 503 PAYMENT_UNAVAILABLE i log),
-   - parametry sesji muszą być DETERMINISTYCZNE (wyliczone tylko z rezerwacji i kursu — żadnego Date.now(), żadnego expires_at), bo Stripe odrzuca ten sam idempotency key z innymi parametrami,
-   - saveCheckoutSession(id, { sessionId, url }) (Eryk) → 200 { url },
-   - PaymentUnavailableError albo błąd Stripe (StripeError, sieć) → 503 PAYMENT_UNAVAILABLE z ogólnym komunikatem po polsku; szczegóły tylko console.error (Z34). Rezerwacja nietknięta.
-   - Body żądania ignoruj — kwota zawsze z bazy (Z29).
-4. src/lib/rateLimit.ts — rateLimit(req, bucket) wg D7 i §3 (kryterium B5: 100 rezerwacji w 10 s z jednego IP → 429 z Retry-After, a drugi klient z innego IP rezerwuje bez problemu):
-   - IP: x-real-ip, potem pierwszy z x-forwarded-for, inaczej "local"; przytnij i ogranicz długość,
-   - okno stałe: windowStart = floor(now / window), dokument { _id: `${bucket}:${ip}:${windowStart}`, count, expiresAt } w kolekcji rate_limits, atomowo findOneAndUpdate({ _id }, { $inc: { count: 1 }, $setOnInsert: { expiresAt } }, { upsert: true, returnDocument: "after" }) — działa na wielu instancjach Vercela,
-   - indeks TTL na expiresAt (createIndex raz na proces, jak ensureIndexes),
-   - count > RATE_LIMIT_MAX → { ok: false, retryAfterSeconds: sekundy do końca okna, min 1 },
-   - RATE_LIMIT_MAX / RATE_LIMIT_WINDOW_SECONDS z env z walidacją (domyślnie 40 / 10),
-   - jeśli Mongo rzuci przy liczeniu → przepuść żądanie (fail-open) i zaloguj: limit nie może położyć rezerwacji.
-   - Eryk wywoła rateLimit w POST /api/reservations — Ty go nie ruszasz.
-5. Testy: dopisz pliki tests/rateLimit.test.ts i tests/checkout.test.ts (tests/ to katalog Eryka, ale nowe pliki z Twoimi testami są OK — nie zmieniaj jego plików ani helpers.ts; potrzebne helpery napisz u siebie). Stripe mockuj (vi.mock("@/lib/stripe")) — testy nie mogą wołać prawdziwego API. Sprawdź: 41. żądanie w oknie → 429 + retryAfter; inne IP niezależne; nowe okno resetuje; checkout: wygasła → 410, opłacona → 409, druga prośba → ten sam url bez drugiego wywołania Stripe; 10 równoległych → jeden url; błąd Stripe → 503 i rezerwacja bez payment.
+1. Walidacja body checkoutu (§3, D22, Z37, Z53): puste/{} → points 0; nie-obiekt albo > 10 kB → 400; points musi spełniać Number.isSafeInteger i ≥ 0 (string "100", 1.5, −1, NaN, null, {} → 400 VALIDATION_ERROR); points > maxPointsFor(amount) z src/lib/points.ts → 400 POINTS_OVER_LIMIT z polem maxPoints — bez wołania Voucherify. Inne pola body (amount!) ignoruj. Uwaga: limit ruchu nadal PRZED walidacją.
+2. Checkout (D16): rezerwacja ma payment → points brak albo równe pointsUsed → ten sam url (bez Stripe, bez Voucherify); inne → 409 POINTS_LOCKED z polem pointsUsed. points 0 → jak w Etapie II, ZERO wywołań Voucherify, saveCheckoutSession z pointsUsed 0 i cardAmount = amount.
+3. src/lib/spend.ts — spendPointsForCheckout (kroki 4–7 z §3):
+   - claimPointsSpend (Eryk): przegrany z tą samą liczbą punktów (SPEND_IN_PROGRESS) czeka do 8 s (odpytuje rezerwację co ~300 ms), aż payment.url się pojawi, i zwraca ten sam url; inna liczba → POINTS_LOCKED,
+   - acquireSpendLock(email) (Eryk) → false: finishPointsSpend("retry") i 409 LOYALTY_BUSY,
+   - getFreshBalance(email) → saldo < points: finishPointsSpend("failed"), 409 INSUFFICIENT_POINTS z polem balance,
+   - applyPoints(email, −points, "spend-<id>", "Bilet <id>") → "done" → finishPointsSpend("done"); "retry" albo LoyaltyUnavailableError → finishPointsSpend("retry"), 503 LOYALTY_UNAVAILABLE,
+   - zawsze releaseSpendLock w finally,
+   - NIGDY nie twórz sesji Stripe ze zniżką bez loyalty.spend.status "done" (Z44).
+4. Sesja Stripe: unit_amount = cardAmount, metadata { reservationId, eventId, seatId, pointsUsed }, opis z „punkty: −10,00 zł” gdy pointsUsed > 0 (formatPrice). Parametry dalej DETERMINISTYCZNE (idempotency key checkout-<id> bez zmian — po D16 liczba punktów w sesji już się nie zmieni). Błąd Stripe po pobraniu punktów → 503 PAYMENT_UNAVAILABLE, punkty zostają (spend done), kolejne „Zapłać” tworzy sesję bez ponownego pobrania.
+5. Odpowiedź checkoutu: 200 { url, pointsUsed, cardAmount }.
+6. GET /api/reservations/[id]/points: rateLimit(req, "loyalty"); zły id → 404; e-mail z rezerwacji (nigdy z URL); balance = getPoints(email) (Eryk — robi też zwroty zaległych punktów), maxPoints = min(balance, maxPointsFor(amount)), locked = rezerwacja ma payment (wtedy maxPoints = pointsUsed); LoyaltyUnavailableError → 503 LOYALTY_UNAVAILABLE. Nie zwracaj e-maila.
+7. TESTY (nowy plik tests/spend.test.ts, LOYALTY_PROVIDER=memory, Stripe zmockowany jak w tests/checkout.test.ts; nie zmieniaj plików Eryka ani helpers.ts):
+   - walidacja: każdy zły points z punktu 1 → 400; 4451 przy cenie 8900 → POINTS_OVER_LIMIT; { amount: 100 } → sesja na pełną kwotę z bazy;
+   - 1000 pkt: sesja na 7900, saldo w memory 0, pointsUsed 1000;
+   - 10 równoległych checkoutów z points 1000 → jeden url, saldo zeszło dokładnie raz;
+   - zmiana punktów po pierwszym checkoucie → 409 POINTS_LOCKED, sesja ta sama;
+   - za mało punktów → 409 INSUFFICIENT_POINTS, rezerwacja bez payment, spend failed, kolejny checkout bez punktów działa;
+   - dwie rezerwacje tego samego e-maila, równolegle po 1000 pkt (saldo 1000) → dokładnie jedna dostaje sesję ze zniżką, druga 409 (LOYALTY_BUSY albo INSUFFICIENT_POINTS), saldo nigdy < 0 (Z36);
+   - LoyaltyUnavailableError → 503, brak sesji Stripe, spend retry; z points 0 przy niedziałającym Voucherify → 200 (Z43);
+   - błąd Stripe po pobraniu punktów → 503; ponowny checkout → sesja bez drugiego pobrania.
 
-DEFINICJA "GOTOWE": npm test, npm run lint, npm run build zielone; lokalnie z kluczem sk_test_: rezerwacja → POST checkout → url otwiera stronę Stripe z właściwą kwotą i opisem po polsku; drugi POST → ten sam url; 45 szybkich POST /api/reservations z jednego IP → ostatnie 429 z Retry-After.
+DEFINICJA "GOTOWE": npm test, lint, build zielone; lokalnie (memory + prawdziwy sk_test_): rezerwacja → POST checkout { "points": 1000 } → strona Stripe na 79,00 zł z opisem punktów; drugi POST z 1000 → ten sam url; z 500 → 409 POINTS_LOCKED; GET /api/reservations/<id>/points → locked true. Na koniec jedna próba z prawdziwym Voucherify (LOYALTY_PROVIDER=voucherify, klucze od lidera) — sprawdź w panelu, że z karty zeszło 1000 pkt.
 Zanim zaczniesz, pokaż krótki plan. Małe commity, na koniec opis PR z listą zagrożeń z §7, które obsłużyłem, i jak to przetestować.
 ```
 
 ---
 
-## Prompt E2 — Eryk: karta B (Webhook) + backend karty C + kryterium B1
+## Prompt E3 — Eryk: karta A (konto punktowe)
 
 ```
-Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + MongoDB + Stripe). Etap II: płatność przez Stripe Checkout w trybie testowym; bilet z kodem dopiero po potwierdzeniu płatności przez webhook. Oceniana jest NIEZAWODNOŚĆ — moja część jest sercem systemu.
-Przeczytaj CONTRACT.md w całości (szczególnie §0 D1, D5, D6, D8, §2, §3, §6, §7 Z22, Z24–Z31, Z34). Nie zmieniaj kontraktu ani plików innych osób — jeśli trzeba, zatrzymaj się i napisz mi. Nie dodawaj zależności (stripe już jest).
-Pracuj na branchu feature/e2-webhook z aktualnego master. Szkielet ma zaślepki; status to już "paid".
+Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + MongoDB + Stripe). Etap III: program lojalnościowy w Voucherify. Moja karta A: konto punktowe klienta — saldo, 1000 punktów powitalnych, punkty za zakup, zwrot punktów za nieopłacone rezerwacje. Źródłem prawdy o saldzie jest Voucherify (sandbox: 100 wywołań na godzinę!). Oceniana jest NIEZAWODNOŚĆ.
+Przeczytaj CONTRACT.md w całości (szczególnie §0a D12–D14, D17, D18, D20, D21, §2 pola lojalnościowe i loyalty_members, §3 „Punkty — szczegóły”, §6, §7 Z39–Z44, Z49, Z51, Z52, Z54). Nie zmieniaj kontraktu ani plików innych osób — jeśli trzeba, zatrzymaj się i napisz mi. Nie dodawaj zależności (fetch, bez SDK).
+Pracuj na branchu feature/e3-loyalty z aktualnego master. Szkielet ma zaślepki i provider "memory".
 
-MOJE KARTY: B — Webhook, backend karty C (status rezerwacji), kryterium Etapu I B1 i wpięcie limitu ruchu.
+MOJA KARTA: A — konto punktowe. Pliki: src/lib/voucherify.ts, src/lib/loyalty.ts, src/app/api/loyalty/**, src/app/api/cron/**, plus moje reservations.ts, payments.ts, tickets i tests/**.
 
-1. POST /api/webhooks/stripe (src/app/api/webhooks/stripe/route.ts) + src/lib/payments.ts:
-   - surowe body: const payload = await req.text(); podpis z nagłówka stripe-signature; getStripe().webhooks.constructEvent(payload, signature, STRIPE_WEBHOOK_SECRET); brak nagłówka / zły podpis / brak sekretu → 400 INVALID_SIGNATURE, nic nie zapisujesz (Z27). Limit body ~1 MB.
-   - typy: checkout.session.completed (tylko gdy session.payment_status === "paid") i checkout.session.async_payment_succeeded → acceptPayment(session, eventCreatedAt); inne typy → 200 i outcome "ignored".
-   - reservationId = session.client_reference_id (sprawdź format i zgodność z metadata.reservationId).
-   - acceptPayment (D8, Z24, Z25): JEDNO atomowe findOneAndUpdate({ _id, status: "held", active: true, expiresAt: { $gt: new Date(eventCreatedAt - 10_000) }, amount: session.amount_total }, { $set: { status: "paid", code, paidAt, "payment.paymentIntentId" } }) + currency === "pln" sprawdzone przed; kolizja kodu → nowy kod (jak w Etapie I).
-   - nie trafiło → sprawdź stan: już paid TĄ SAMĄ sesją → nic (powtórka); paid INNĄ sesją → zwrot "duplicate"; wygasła/zwolniona → zwrot "late"/"not_held"; zła kwota/waluta → zwrot "amount_mismatch". Zwrot: getStripe().refunds.create({ payment_intent }, { idempotencyKey: "refund-<sessionId>" }) i $push do payment.refunds. Rezerwacji nie ruszasz (nie oddajesz miejsca, którego nie ma, nie zabierasz cudzego).
-   - log w stripe_events: { _id: event.id, type, reservationId, outcome, receivedAt }; to samo event.id drugi raz → 200 bez przetwarzania (Z28). Kolejność: przetwórz (idempotentnie), potem zapisz log — błąd w połowie ma pozwolić Stripe ponowić.
-   - błąd bazy albo Stripe przy przetwarzaniu → 500 (bez szczegółów) — Stripe ponowi. Zwrot, który się nie udał → 500, żeby Stripe ponowił.
-2. src/lib/reservations.ts:
-   - createReservation: amount = event.price (już w szkielecie — sprawdź) i kryterium B1 / D6 (Z22): identyczne żądanie (ten sam eventId, seatId, customerName po trim, email po trim i lowercase) dla AKTYWNEJ rezerwacji → { ok: true, replay: true, reservationId, expiresAt, amount } → route zwraca 200 (pierwsze 201). Działa po kolei i równolegle: po E11000 przeczytaj blokującą rezerwację; jeśli jest tej samej osoby → replay, inaczej SEAT_TAKEN. Zapisuj e-mail już znormalizowany (lowercase).
-   - getCheckoutCandidate / saveCheckoutSession (§6) — dopracuj: saveCheckoutSession atomowo tylko gdy status "held" i brak payment.sessionId.
-   - getReservation: status held/paid/expired, amount, code tylko przy paid. Gdy held + payment.sessionId + nie wygasła → syncCheckoutSession(id) (Z31): getStripe().checkout.sessions.retrieve; payment_status "paid" → acceptPayment tą samą funkcją co webhook (z czasem = teraz); błąd Stripe → zwróć stan z bazy bez wyjątku. Sync NIGDY nie robi zwrotów — to tylko webhook.
-   - getTicketByCode: tylko paid, z amount i paidAt.
-3. POST /api/reservations: na początku rateLimit(req, "reservations") (Kamil) → 429 przez rateLimited() (Z23); 201 dla nowej, 200 dla replay, body { reservationId, expiresAt, amount }.
-4. /purchase wg D5 (szkielet). Gdy testy przejdą na acceptPayment (punkt 6), usuń wewnętrzną purchaseReservation albo zostaw ją tylko dla testów — żadna ścieżka HTTP nie może wydać biletu bez płatności.
-5. src/lib/db.ts: indeks { "payment.sessionId": 1 }; stripe_events nie potrzebuje dodatkowych (unikalne _id).
-6. TESTY (vitest, pociag_test, Stripe zmockowany — vi.mock("@/lib/stripe"), podpisy przez prawdziwe stripe.webhooks.generateTestHeaderString z sekretem testowym):
-   - webhook bez podpisu / ze złym podpisem → 400, rezerwacja held;
-   - checkout.session.completed → paid + kod; ten sam event 2× → jeden kod, bez drugiego zapisu; 2 różne eventy tej samej sesji → jeden kod;
-   - płatność po expiresAt + 10 s → brak biletu, refunds.create wywołane raz, miejsce nie wraca do X;
-   - wyścig C2 (5×): w chwili wygaśnięcia równolegle webhook X i rezerwacja Y → zawsze dokładnie jeden właściciel, a przegrany X dostaje zwrot;
-   - druga sesja dla opłaconej rezerwacji → zwrot "duplicate", kod się nie zmienia;
-   - zła kwota albo waluta → zwrot "amount_mismatch", held bez zmian;
-   - B1: identyczny POST 2× po kolei i 2× równolegle → jedna rezerwacja, ta sama reservationId (201 + 200); inna osoba → 409;
-   - GET rezerwacji: held z sesją opłaconą w Stripe (mock) → paid po samym GET; mock rzuca → stan z bazy, bez 500;
-   - /purchase: held → 402, paid → 200 z kodem;
-   - wszystkie dotychczasowe testy (Z1–Z21) zielone.
+1. src/lib/voucherify.ts — klient REST API v1 (jak w PDF etapu), nagłówki X-App-Id / X-App-Token, timeout 5 s (AbortSignal.timeout), bez logowania kluczy:
+   - findMember(email): GET /v1/loyalties/{campaignId}/members?customer=<email> → { memberId: code, balance: loyalty_card.balance } albo null,
+   - createMember(email): POST /v1/loyalties/{campaignId}/members z customer { source_id: email, email },
+   - getBalance(memberId), adjustBalance(memberId, points, { reason, sourceId }): POST /v1/loyalties/{campaignId}/members/{memberId}/balance { points, reason, source_id } → nowe saldo,
+   - hasTransaction(memberId, sourceId): GET …/members/{memberId}/transactions — szukaj source_id (albo reason, jeśli source_id nie wraca),
+   - 429 → LoyaltyUnavailableError z retryAfterSeconds z Retry-After / X-Rate-Limit-Retry; zapamiętaj blokadę do tej chwili (§3 „Budżet wywołań”) i do jej końca nie wołaj Voucherify wcale; 5xx/sieć → LoyaltyUnavailableError; timeout po wysłaniu POST → uncertain: true,
+   - NAJPIERW w sandboxie sprawdź na 2–3 ręcznych wywołaniach (curl, klucze w zmiennych, nie w repo): kształt odpowiedzi, czy ujemny points poniżej salda jest odrzucany, czy drugi createMember dla tego samego source_id daje błąd czy drugą kartę, czy transakcje zwracają source_id. Wnioski wpisz do opisu PR — od nich zależy „Pewność operacji”.
+   - provider "memory" z szkieletu zostaje do testów; odmowa memory przy VERCEL_ENV=production (D21).
+2. src/lib/loyalty.ts — wszystkie funkcje z §6:
+   - normalizeEmail (D13) — użyj go też w createReservation (e-mail zapisany po normalizacji już jest — sprawdź),
+   - ensureMember (D14, Z51): atomowe absent/brak → creating w loyalty_members; zwycięzca: findMember (karta z panelu → bez powitalnych) albo createMember + applyPoints(+1000, "welcome-<email>"); welcome pending → done; przegrany czeka do kilku sekund na ready,
+   - getPoints (D20): settleLoyalty({ email }) → pamięć podręczna 30 s / absent 10 min / jedno findMember; 429 lub niedostępność → ostatnie znane saldo, a bez niego LoyaltyUnavailableError,
+   - getFreshBalance: zawsze z Voucherify (1000 dla e-maila bez karty — wtedy NIE zakładaj karty, to zrobi applyPoints przez ensureMember),
+   - applyPoints z „Pewnością operacji”: uncertain → hasTransaction → done/retry; aktualizuj balance i balanceAt,
+   - acquireSpendLock / releaseSpendLock (spendLockUntil, 15 s, atomowo),
+   - settleLoyalty (D17, Z39, Z40): jedno findOneAndUpdate zamyka rezerwację (status expired, active false, loyalty.refund pending) tylko gdy spend done, nie paid, a active false albo expiresAt < teraz − 30 s; potem +pointsUsed z "refund-<id>"; kroki pending starsze niż 2 min → najpierw hasTransaction (Z54),
+   - earnForPurchase (D18, Z41): zajęcie earn (pending/retry → pending), +pointsEarned z "earn-<id>" przez ensureMember; pointsEarned 0 → done bez wołania Voucherify,
+   - runLoyaltyRetries: zaległe refund i earn (limit np. 20 na przebieg, żeby nie zjeść 100/h).
+3. GET /api/loyalty: rateLimit(req, "loyalty") → walidacja e-maila jak w rezerwacji → 200 { email (znormalizowany), points }; LoyaltyUnavailableError → 503 LOYALTY_UNAVAILABLE. Nic poza tymi polami (Z49).
+4. GET /api/cron/settle: Authorization: Bearer <CRON_SECRET> (porównanie stałoczasowe; brak sekretu w env → 401 zawsze) → runLoyaltyRetries + retryTicketEmails (Mateusz) → 200 { refunded, earned, emails }.
+5. reservations.ts / payments.ts:
+   - claimPointsSpend / finishPointsSpend / saveCheckoutSession wg §6 (atomowo; testy wyścigów),
+   - GET /api/reservations/:id: po syncCheckoutSession — settleLoyalty({ reservationId }), dla paid z earn retry/stary pending → after(earnForPurchase), ticketEmail retry → after(sendTicketEmail); odpowiedź z pointsUsed, cardAmount, pointsEarned (null przed opłaceniem),
+   - acceptPayment: kwota = cardAmount ?? amount, w tym samym przejściu pointsEarned i loyalty.earn pending; potem after(earnForPurchase + sendTicketEmail) — dla webhooka i dla sync z GET,
+   - zwrot pieniędzy za rezerwację z spend done, która nie jest paid → też settleLoyalty({ reservationId }) (Z40),
+   - GET /api/tickets/:code z pointsUsed, cardAmount, pointsEarned.
+6. TESTY (vitest, pociag_test, LOYALTY_PROVIDER=memory, Voucherify i Stripe zmockowane; dla voucherify.ts zmockuj fetch):
+   - GET /api/loyalty: nowy e-mail → 1000 bez zakładania karty; JAN@Example.com = jan@example.com; zły e-mail → 400; Voucherify 429 → saldo z pamięci, bez niej 503;
+   - powitalne 1000 dokładnie raz przy 5 równoległych pierwszych operacjach (Z51);
+   - zakup 8900 bez punktów → +890 (nowy klient: 1000 + 890 = 1890); z 1000 pkt → 7900 kartą, +790, saldo 790;
+   - webhook 2× i webhook + GET → punkty naliczone raz (Z41);
+   - rezerwacja z spend done wygasa → GET rezerwacji albo GET /api/loyalty oddaje punkty raz; spóźniona płatność z punktami → zwrot pieniędzy + zwrot punktów, brak biletu (Z40);
+   - wyścig: settleLoyalty vs webhook w chwili wygaśnięcia (5×) → albo paid i punkty zostają, albo expired, zwrot pieniędzy i punktów — nigdy oba;
+   - applyPoints z uncertain: transakcja jest → done bez drugiego wywołania; nie ma → retry;
+   - Voucherify niedostępny przy naliczeniu → bilet jest, earn retry, potem runLoyaltyRetries dolicza;
+   - cron bez sekretu / ze złym → 401;
+   - wszystkie dotychczasowe testy zielone.
 
-DEFINICJA "GOTOWE": npm test, lint, build zielone; lokalnie ze `stripe listen`: rezerwacja → checkout → karta 4242… → webhook → GET rezerwacji paid z kodem; `stripe trigger checkout.session.completed` nie psuje niczego (brak client_reference_id → ignored, 200); webhook bez podpisu (curl) → 400.
-Zanim zaczniesz, pokaż krótki plan. Małe commity, na koniec opis PR z listą zagrożeń z §7, które obsłużyłem, i jak to przetestować.
+DEFINICJA "GOTOWE": npm test, lint, build zielone; z prawdziwym Voucherify (krótko, liczcie wywołania): GET /api/loyalty dla nowego e-maila → 1000 i brak karty w panelu; zakup przez Stripe (`stripe listen`) → w panelu karta z 1000 + 890; drugi GET w ciągu 30 s nie woła Voucherify.
+Zanim zaczniesz, pokaż krótki plan. Małe commity, na koniec opis PR z listą zagrożeń z §7, które obsłużyłem, wnioskami z ręcznych wywołań sandboxa i liczbą wywołań Voucherify na jeden zakup.
 ```
 
 ---
 
-## Prompt M2 — Mateusz: frontend płatności (karty A i C)
+## Prompt M2 — Mateusz: karta C (mail) + frontend punktów
 
 ```
-Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + Tailwind). Jestem liderem. Etap II: płatność przez Stripe Checkout. Oceniana jest NIEZAWODNOŚĆ.
-Przeczytaj CONTRACT.md w całości (szczególnie §3, §5, §7 Z4, Z30, Z31, Z34, Z35). Nie zmieniaj plików innych osób (§6).
-Pracuj na branchu feature/e2-payment-frontend z aktualnego master. Backend może być jeszcze zaślepką — pracuj na kształtach z kontraktu; z kluczem sk_test_ i `stripe listen` przetestuj na prawdziwym Stripe, gdy Kamil i Eryk wejdą do master.
+Pracuję w 3-osobowym zespole nad projektem PAS S01: system rezerwacji biletów na POCIĄG „Konduktor” (Next.js 15 App Router + TypeScript + Tailwind). Jestem liderem. Etap III: punkty lojalnościowe (Voucherify) i mail z biletem (Resend). Oceniana jest NIEZAWODNOŚĆ.
+Przeczytaj CONTRACT.md w całości (szczególnie §0a D16, D19, D21, §3 „Mail z biletem” i „Punkty — szczegóły”, §4, §5, §7 Z38, Z45–Z48). Nie zmieniaj plików innych osób (§6).
+Pracuj na branchu feature/e3-mail-frontend z aktualnego master. Backend może być jeszcze zaślepką (memory/log) — pracuj na kształtach z kontraktu.
 
-MOJE ZADANIE: wszystko, co klient widzi przy płatności. Komponenty: src/components/reservation/** i src/components/payment/**.
+MOJE ZADANIE: karta C (mail z biletem) i wszystko, co klient widzi przy punktach. Pliki: src/lib/mail.ts, src/components/**, src/app/reserve/**, src/app/reservations/**, src/app/payment/**, tests/mail.test.ts.
 
-1. Cena wszędzie przez formatPrice: formularz /reserve (nad przyciskiem „Rezerwuję miejsce”: „Cena: 89,00 zł”), ekran rezerwacji, bilet („Zapłacono 89,00 zł”).
-2. /reservations/<id> (held): przycisk „Zapłać 89,00 zł” (kwota z amount rezerwacji):
-   - blokada na pierwszym kliknięciu (ref, nie tylko state) — Z4,
-   - POST /api/reservations/:id/checkout → 200 → window.location.assign(url) (przycisk zostaje zablokowany, tekst „Przechodzę do płatności…”),
-   - 410 → stan „wygasła”; 409 ALREADY_PAID → przeładuj stan (GET) i pokaż bilet; 429 → komunikat z Retry-After („Za dużo prób, spróbuj za N s”); 503 PAYMENT_UNAVAILABLE → „Płatności chwilowo nie działają, spróbuj za chwilę” + ponów; błąd sieci → ponów,
-   - pod przyciskiem: „Płatność obsługuje Stripe. To tryb testowy — karta 4242 4242 4242 4242, dowolna przyszła data i CVC.”
-   - status "paid" przy wejściu → router.replace na /reservations/<code>.
-3. /payment/success?reservationId=… (karta C) — „Płatność w toku…”:
-   - zły / brak reservationId → komunikat + link do rozkładu,
-   - odpytuj GET /api/reservations/:id co 2 s (setTimeout, nie setInterval; przerwij po odmontowaniu), maks. 60 s,
-   - paid → router.replace(`/reservations/${code}`) (bilet),
-   - expired → „Rezerwacja wygasła przed potwierdzeniem płatności. Jeśli pobraliśmy pieniądze, zwrócimy je automatycznie.” + link do mapy,
-   - held po 60 s → „Wciąż czekamy na potwierdzenie od Stripe” + „Sprawdź ponownie” (nie obiecuj biletu),
-   - NIGDY nie pokazuj biletu tylko dlatego, że jesteśmy na /payment/success (Z30).
-4. /payment/cancel?reservationId=… (karta C) — „Płatność przerwana”:
-   - held i ważna → licznik (ten sam co na ekranie rezerwacji, zegar serwera) + „Zapłać ponownie” (ten sam checkout — Kamil zwraca ten sam url),
-   - expired → „Rezerwacja wygasła, miejsce wróciło do puli” + link do mapy,
-   - paid (np. zapłacił w drugiej karcie) → bilet.
-5. Wspólne: hook usePollReservation / komponent statusu w src/components/payment/, aria-live dla zmian statusu, responsywnie, fetch z no-store, apiFetch z src/components/reservation/api.ts (dopisz obsługę nagłówka Retry-After).
-6. Ticket: „Zapłacono 89,00 zł · <data płatności>” zamiast „Kupiono”.
+1. src/lib/mail.ts (D19, Z46–Z48):
+   - sendTicketEmail(reservationId): atomowe zajęcie ticketEmail (brak/retry → sending, attempts + 1; sending starsze niż 2 min też można przejąć — Resend i tak odrzuci duplikat po Idempotency-Key), tylko dla paid; fetch POST https://api.resend.com/emails z Authorization: Bearer RESEND_API_KEY, Idempotency-Key: ticket-<reservationId>, from MAIL_FROM, to e-mail z rezerwacji, subject „Bilet <kod> — <pociąg> <relacja>”, html + text; timeout 10 s,
+   - wynik: 2xx → sent + resendId; 409 invalid_idempotent_request / concurrent → traktuj jak sent (już wysłane); 429/5xx/sieć → retry (najwyżej 5 prób, potem failed); inne 4xx (403 adres spoza testowych, 422) → failed. Nigdy nie rzuca. Brak klucza → failed i console.error,
+   - treść jak §3: kod, kurs, odjazd (Europe/Warsaw, formatDate/formatTime), wagon i miejsce (seatLabel), pasażer, „Zapłacono kartą: 79,00 zł”, „Zapłacono punktami: 1000 pkt (10,00 zł)” (tylko gdy > 0), „Zebrane punkty: 790”, link APP_URL/reservations/<kod>; wszystkie dane klienta przez escape HTML (Z48); prosty HTML z inline CSS, bez obrazków,
+   - provider "log": console.log tematu i tekstu, status sent (resendId "log"),
+   - retryTicketEmails(): zaległe retry i stare sending (limit 20) — woła cron Eryka.
+2. /reserve (karta A — frontend): po poprawnym e-mailu (ta sama walidacja co pole) z opóźnieniem 500 ms GET /api/loyalty → „Masz 1000 pkt (10,00 zł). Możesz nimi zapłacić do połowy ceny.”; jedno żądanie naraz (AbortController), 503/429 → nic nie pokazuj (formularz działa bez punktów), nigdy nie blokuj rezerwacji.
+3. /reservations/<id> (held) (karta B — frontend):
+   - GET /api/reservations/<id>/points → pole „Użyj punktów” (liczba, krok 1, min 0, max maxPoints), podpowiedź „Najwięcej: 1000 pkt (masz 1000 pkt)”, przycisk „Użyj wszystkich”; cena i przycisk zmieniają się od razu: „Zapłać 79,00 zł” (amount − punkty, formatPrice), obok „w tym 1000 pkt = 10,00 zł”,
+   - walidacja na kliencie jak serwer (liczba całkowita, 0…maxPoints), ale serwer i tak decyduje: 400 POINTS_OVER_LIMIT / 409 INSUFFICIENT_POINTS → komunikat i korekta pola do maxPoints/balance z odpowiedzi; 409 POINTS_LOCKED → pole zablokowane na pointsUsed; 409 LOYALTY_BUSY i 503 LOYALTY_UNAVAILABLE → komunikat + „Zapłać bez punktów” (ustawia 0),
+   - locked (był już checkout) → pole tylko do odczytu z pointsUsed; „Zapłać ponownie” na /payment/cancel wysyła te same punkty,
+   - points endpoint niedostępny → pole ukryte, płatność bez punktów działa jak w Etapie II,
+   - podwójny klik dalej blokowany (Z38 — jedno żądanie).
+4. /payment/success i bilet (karta C — frontend): podsumowanie „Kartą 79,00 zł · punktami 1000 pkt (10,00 zł) · zebrane punkty: 790”; bez punktów: „Kartą 89,00 zł · zebrane punkty: 890”; pod spodem „Wysyłamy bilet na Twój e-mail.” (nie „wysłaliśmy” — mail mógł nie dojść; strona nie zna e-maila i go nie wyświetla).
+5. tests/mail.test.ts: fetch zmockowany — sukces → sent i Idempotency-Key ticket-<id>; 2 równoległe sendTicketEmail → jedno wywołanie Resend; 429 → retry, po 5 → failed; 403 → failed bez ponowień; imię `<img src=x onerror=alert(1)>` w HTML jako tekst; brak punktów → brak linii punktów; mail tylko dla paid.
 
-DEFINICJA "GOTOWE": z prawdziwym Stripe (sk_test_ + stripe listen): mapa → formularz z ceną → „Zapłać 89,00 zł” → strona Stripe → 4242… → /payment/success → po kilku sekundach bilet; „Wróć” na stronie Stripe → /payment/cancel → „Zapłać ponownie” → ta sama strona Stripe; 4000 0000 0000 0002 → odmowa na stronie Stripe, rezerwacja dalej held; 4000 0025 0000 3155 → okno 3D Secure → bilet; wejście na /payment/success?reservationId=<nieopłacona> → brak biletu; podwójny klik „Zapłać” → jedno żądanie. npm run build, lint, test zielone.
+DEFINICJA "GOTOWE": lokalnie memory/log: formularz pokazuje saldo, licznik z polem punktów, „Zapłać 79,00 zł” → Stripe na 79,00 zł → bilet z podsumowaniem, mail w konsoli raz (także po odświeżeniu strony sukcesu i powtórce webhooka z `stripe events resend`). Raz z prawdziwym Resend na delivered+test@resend.dev i bounced+test@resend.dev (Resend → Emails: delivered / bounced; bilet w obu przypadkach działa). npm run build, lint, test zielone.
 Zanim zaczniesz, pokaż krótki plan. Małe commity, na koniec opis PR.
 ```
 
 ---
 
-## Prompt M3 — Mateusz: spięcie, Stripe na Vercelu, atak, demo
+## Prompt M3 — Mateusz: spięcie, Vercel, atak, demo
 
 ```
-Jestem liderem zespołu w projekcie PAS S01 (system rezerwacji biletów na POCIĄG „Konduktor”, Next.js 15 + MongoDB Atlas + Stripe, wdrożenie na Vercel). Karty Etapu II są w master. Spinam całość, wdrażam i sam atakuję system przed demem. Przeczytaj CONTRACT.md w całości, zwłaszcza §0, §3, §4, §7 (Z22–Z35), oraz DEPLOY.md i DEMO.md.
-Pracuj na branchu feature/e2-attack z aktualnego master.
+Jestem liderem zespołu w projekcie PAS S01 (system rezerwacji biletów na POCIĄG „Konduktor”, Next.js 15 + MongoDB Atlas + Stripe + Voucherify + Resend, wdrożenie na Vercel). Karty Etapu III są w master. Spinam całość, wdrażam i sam atakuję system przed demem. Przeczytaj CONTRACT.md w całości, zwłaszcza §0a, §3, §4, §7 (Z36–Z54), oraz DEPLOY.md i DEMO.md.
+Pracuj na branchu feature/e3-attack z aktualnego master.
 
-1. scripts/attack.mjs — aktualizacja na Etap II (dalej czysty Node 20+, bez zależności):
-   - kryteria CEO dla Etapu I (PAS Kryteria): A1, A2 (miejsce znika z takenSeats ≤ 15 s po expiresAt — z --slow), B1 (identyczny POST 2× po kolei i równolegle → ta sama rezerwacja), B2 (20 równoczesnych rezerwacji jednego miejsca od różnych klientów → dokładnie 1×2xx, reszta 4xx), B3, B4 (z --slow), B5 (100 rezerwacji różnych miejsc w 10 s → 429 + Retry-After; nagłówek x-forwarded-for innego „klienta” nie może obejść limitu na Vercelu — sprawdź i opisz), C1–C4 przeniesione na checkout (2× checkout → ten sam url, checkout nieistniejącej / abc → 404, checkout po czasie → 410, opłacona → 409),
-   - limit ruchu psuje własne scenariusze: rozłóż je w czasie (czekaj na Retry-After) albo licz 429 jako oczekiwany wynik tam, gdzie to zgodne z kryterium; nigdy nie licz 5xx jako sukcesu,
-   - webhook: POST bez podpisu → 400; ze złym podpisem → 400; z flagą --webhook-secret <whsec> (tylko lokalnie, NIGDY na produkcji) podpisane zdarzenia przez node:crypto (nagłówek t=…,v1=HMAC-SHA256): checkout.session.completed z nieistniejącą rezerwacją → 200 i nic; ten sam event 2× → 200 i jeden kod,
-   - /payment/success?reservationId=<nieopłacona> → strona nie zawiera kodu biletu (Z30),
-   - zamiast dawnego /purchase: /purchase na held → 402,
-   - wynik jak dotąd: PASS/FAIL, exit code, UWAGA dla znanych zachowań.
-2. scripts/reset.ts: czyści także stripe_events i rate_limits (deleteMany, nie drop) i dalej wymaga --yes / --prod.
-3. Wdrożenie (instrukcje do DEPLOY.md + zrób je):
-   - Vercel env: STRIPE_SECRET_KEY (sk_test_), STRIPE_WEBHOOK_SECRET, APP_URL=https://<adres>.vercel.app, RATE_LIMIT_MAX=40, RATE_LIMIT_WINDOW_SECONDS=10; redeploy,
-   - Stripe Dashboard (tryb testowy) → Developers → Webhooks → Add endpoint https://<adres>.vercel.app/api/webhooks/stripe, zdarzenia checkout.session.completed i checkout.session.async_payment_succeeded; jego whsec_ do Vercela,
-   - nauczyciel w zespole Stripe z rolą tylko do odczytu,
-   - po wdrożeniu: npm run seed (ceny) i npm run reset -- --yes --prod.
-4. Test end-to-end na Vercelu z kartami: 4242… (bilet), 4000 0000 0000 0002 (odmowa, rezerwacja held), 4000 0025 0000 3155 (3D Secure → bilet), przerwanie i ponowna płatność, płatność po wygaśnięciu (otwórz Stripe, odczekaj > 2 min, zapłać → brak biletu, zwrot widoczny w Stripe Dashboard). Wyniki do DEPLOY.md.
-5. DEMO.md: nowy scenariusz (rezerwacja z ceną → Stripe → bilet; przerwanie → ponowna płatność; odmowa karty; spóźniona płatność → zwrot), tabela zagrożeń Z22–Z35 po jednym zdaniu, odpowiedzi na pytania CEO (dlaczego webhook, a nie strona powrotu; co przy podwójnej płatności; gdzie są klucze; skąd wiecie, że kwoty nie da się podmienić).
-6. Ściąga dla Kamila (osobny dokument) — zaktualizuję ją sam po tym prompcie.
+1. scripts/attack.mjs — Etap III (dalej czysty Node 20+, bez zależności), wszystkie dotychczasowe kryteria (I: A1–C4, II: II.A1–II.C3) bez zmian plus:
+   - GET /api/loyalty: brak/zły e-mail → 400; nowy e-mail → { email, points: 1000 }; wielkie litery → ten sam e-mail w odpowiedzi; nic poza email i points; nigdy 5xx,
+   - checkout z points: "100", 1.5, −1, null, {} → 400; ponad połowę → 400 POINTS_OVER_LIMIT; więcej niż saldo → 409; { amount: 100 } → sesja na kwotę z bazy (II.A1); 5 równoległych z tymi samymi punktami → jeden url i saldo zeszło raz; inna liczba po pierwszym → 409 POINTS_LOCKED,
+   - GET rezerwacji ma pointsUsed, cardAmount i pointsEarned (null przed opłaceniem),
+   - z --webhook-secret (tylko lokalnie): opłacenie rezerwacji z punktami → pointsEarned = floor(cardAmount / 100) × 10; powtórka zdarzenia nie zmienia pointsEarned ani salda; liczbę maili (provider log) sprawdzam ręcznie w logu serwera — atak tylko wypisuje UWAGA z przypomnieniem,
+   - BUDŻET: na produkcji cała część punktowa ≤ 25 wywołań Voucherify na przebieg (limit 100/h na projekt!) — flaga --skip-loyalty, e-maile testowe delivered+atk-<czas>-<n>@resend.dev (każdy przebieg nowi klienci), wypisz na końcu szacowaną liczbę wywołań.
+2. scripts/reset.ts: czyści także loyalty_members (deleteMany) i ostrzega, że salda w Voucherify zostają (nowe e-maile w ataku to omijają).
+3. Wdrożenie (instrukcje do DEPLOY.md + zrób je): Vercel env z §1 [E3] (LOYALTY_PROVIDER=voucherify, MAIL_PROVIDER=resend, klucze, CRON_SECRET), redeploy, cron widoczny w Settings → Cron Jobs; sprawdź /api/cron/settle bez sekretu → 401.
+4. Test end-to-end na Vercelu (robię ręcznie): nowy klient delivered+demo@resend.dev — saldo 1000 → rezerwacja 89 zł, 1000 pkt → Stripe 79,00 zł → 4242 → bilet z podsumowaniem → mail w Resend (delivered) → saldo 790 w aplikacji i w panelu Voucherify; bez punktów → +890; spóźniona płatność z punktami → zwrot w Stripe i punkty wracają; bounced+demo@resend.dev → bilet jest, mail bounced. Stripe CLI na produkcji: `stripe trigger checkout.session.completed` → 200, nic się nie zmienia (II.B2). Wyniki do DEPLOY.md.
+5. DEMO.md: nowy scenariusz Etapu III (saldo → płatność punktami → mail → saldo po zakupie), tabela Z36–Z54 po jednym zdaniu, pytania CEO (dlaczego punkty schodzą przy „Zapłać”; co gdy klient nie zapłaci; co gdy Voucherify padnie; skąd pewność, że mail nie przyjdzie dwa razy; limit 100/h).
+6. Ściąga dla Kamila — zaktualizuję ją sam po tym prompcie.
 
-DEFINICJA "GOTOWE": attack.mjs na Vercelu = same PASS (z --slow też); test kart z punktu 4 przeszedł; DEPLOY.md i DEMO.md gotowe.
+DEFINICJA "GOTOWE": attack.mjs na Vercelu = same PASS (z --slow też) i ≤ 25 wywołań Voucherify; test z punktu 4 przeszedł; DEPLOY.md i DEMO.md gotowe.
 Zanim zaczniesz, pokaż krótki plan. Błąd w cudzym pliku → NIE poprawiaj, opisz: endpoint, wejście, oczekiwany i faktyczny wynik, plik.
 ```
