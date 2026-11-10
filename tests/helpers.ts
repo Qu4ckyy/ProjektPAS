@@ -6,12 +6,19 @@ import { GET as getReservationRoute } from "@/app/api/reservations/[id]/route";
 import { POST as purchaseRoute } from "@/app/api/reservations/[id]/purchase/route";
 import { POST as createRoute } from "@/app/api/reservations/route";
 import { GET as getTicketRoute } from "@/app/api/tickets/[code]/route";
-import { getDb, RESERVATIONS_COLLECTION } from "@/lib/db";
+import { getDb, LOYALTY_MEMBERS_COLLECTION, RESERVATIONS_COLLECTION, STRIPE_EVENTS_COLLECTION } from "@/lib/db";
 import { EVENTS_COLLECTION } from "@/lib/events";
+import { loyaltyTiming } from "@/lib/loyalty";
 import { acceptPayment } from "@/lib/payments";
+import { resetMemoryLoyalty, resetVoucherifyRateLimit } from "@/lib/voucherify";
 import type { Reservation, TrainEvent, Wagon } from "@/lib/types";
 
 export const TEST_DB = "pociag_test";
+
+// [E3] Odpytywanie o APPROVED bez czekania — provider memory zatwierdza od razu, a mocki fetch same
+// decydują, ile razy odpowiedzieć PENDING. Prawdziwe czasy: loyaltyTiming w src/lib/loyalty.ts.
+loyaltyTiming.approvalPollMs = [5, 5, 5];
+loyaltyTiming.memberWaitStepMs = 20;
 
 /** Krótki TTL do testów wygasania. */
 export const SHORT_TTL_SECONDS = 2;
@@ -54,14 +61,22 @@ export async function reservationsCollection(): Promise<Collection<Reservation>>
   return db.collection<Reservation>(RESERVATIONS_COLLECTION);
 }
 
-/** Wstawia kursy testowe (idempotentnie) i czyści rezerwacje. deleteMany, nie drop — drop usuwa indeksy. */
+/**
+ * Wstawia kursy testowe (idempotentnie), czyści rezerwacje, log zdarzeń Stripe i konta punktowe
+ * (Mongo + provider memory + blokada po 429). deleteMany, nie drop — drop usuwa indeksy.
+ */
 export async function resetTestData(): Promise<void> {
   const reservations = await reservationsCollection();
-  const events = (await getDb()).collection<TrainEvent>(EVENTS_COLLECTION);
+  const db = await getDb();
+  const events = db.collection<TrainEvent>(EVENTS_COLLECTION);
   await Promise.all(
     [FUTURE_EVENT, DEPARTED_EVENT].map((event) => events.replaceOne({ _id: event._id }, event, { upsert: true })),
   );
   await reservations.deleteMany({});
+  await db.collection(LOYALTY_MEMBERS_COLLECTION).deleteMany({});
+  await db.collection(STRIPE_EVENTS_COLLECTION).deleteMany({});
+  resetMemoryLoyalty();
+  resetVoucherifyRateLimit();
 }
 
 export function setTtl(seconds: number | undefined): void {
