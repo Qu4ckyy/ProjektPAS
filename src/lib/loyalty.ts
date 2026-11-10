@@ -47,8 +47,10 @@ const RETRY_BACKOFF_MS = 60_000;
 /** Szukając naszego reason, patrzymy na transakcje z ostatnich 24 h (§3 „Operacje na punktach”). */
 const TRANSACTION_LOOKBACK_MS = 24 * 60 * 60_000;
 
-/** Ile zaległych operacji na jeden przebieg crona i ile zwrotów jednego e-maila naraz — budżet 100/h. */
+/** Ile zaległych operacji (wszystkich rodzajów razem) na jeden przebieg crona i ile zwrotów jednego e-maila naraz — budżet 100/h. */
 const RETRY_BATCH = 20;
+/** Z tego najwyżej tyle na sprawdzanie niepewnych pobrań. */
+const UNCERTAIN_SPEND_BATCH = 5;
 const EMAIL_SETTLE_BATCH = 10;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -555,10 +557,11 @@ async function retryEarnsFor(email: string): Promise<void> {
  * Nieopłacona → spend: done z tą liczbą punktów, a zwrot zrobi claimRefunds. Opłacona (punkty nie poszły
  * na bilet) → zwrot od razu. Nie zeszły → failed. Bez tego punkty mogłyby przepaść (Z44, Z54).
  */
-async function resolveUncertainSpends(limit: number): Promise<void> {
+async function resolveUncertainSpends(limit: number): Promise<number> {
   const reservations = await reservationsCollection();
   const members = await membersCollection();
-  for (let i = 0; i < limit; i++) {
+  let handled = 0;
+  for (; handled < limit; handled++) {
     const now = new Date();
     const doc = await reservations.findOneAndUpdate(
       {
@@ -584,7 +587,7 @@ async function resolveUncertainSpends(limit: number): Promise<void> {
       ],
       { returnDocument: "after" },
     );
-    if (!doc?.loyalty?.spend) return;
+    if (!doc?.loyalty?.spend) break;
     const attempts = doc.loyalty.spend.attempts;
     const id = doc._id.toHexString();
 
@@ -644,15 +647,22 @@ async function resolveUncertainSpends(limit: number): Promise<void> {
     );
     if (claimed) await runStep(claimed, "refund", `refund-${id}`);
   }
+  return handled;
 }
 
-/** Dzienny cron: niepewne pobrania, zaległe zwroty i naliczenia (najwyżej RETRY_BATCH każdego rodzaju). */
+/**
+ * Dzienny cron: niepewne pobrania, zaległe zwroty i naliczenia — razem najwyżej RETRY_BATCH operacji
+ * na przebieg, żeby jeden przebieg nie zjadł godzinnego limitu sandboxa.
+ */
 export async function runLoyaltyRetries(): Promise<{ refunded: number; earned: number }> {
-  await resolveUncertainSpends(RETRY_BATCH);
-  const refunded = await refundAll(await claimRefunds({}, RETRY_BATCH, true));
+  let budget = RETRY_BATCH - (await resolveUncertainSpends(UNCERTAIN_SPEND_BATCH));
+
+  const refunds = await claimRefunds({}, budget, true);
+  budget -= refunds.length;
+  const refunded = await refundAll(refunds);
 
   let earned = 0;
-  for (let i = 0; i < RETRY_BATCH; i++) {
+  for (; budget > 0; budget--) {
     const doc = await claimEarn({}, true);
     if (!doc) break;
     if (await runStep(doc, "earn", `earn-${doc._id.toHexString()}`)) earned++;
