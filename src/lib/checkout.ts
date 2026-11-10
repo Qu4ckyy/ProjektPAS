@@ -46,9 +46,13 @@ export function appUrl(): string | null {
   return raw;
 }
 
-/** Klucz idempotencji sesji — jedna sesja Stripe na rezerwację (D9). */
-export function checkoutIdempotencyKey(reservationId: string): string {
-  return `checkout-${reservationId}`;
+/**
+ * Klucz idempotencji sesji — jedna sesja Stripe na rezerwację i liczbę punktów (D9, D16). Bez punktów
+ * jak w Etapie II; z punktami osobny klucz, bo Stripe odrzuca ten sam klucz z inną kwotą — równoległe
+ * „Zapłać” bez punktów i z punktami zablokowałyby wtedy płatność tej rezerwacji na 24 h.
+ */
+export function checkoutIdempotencyKey(reservationId: string, pointsUsed = 0): string {
+  return pointsUsed > 0 ? `checkout-${reservationId}-p${pointsUsed}` : `checkout-${reservationId}`;
 }
 
 /**
@@ -167,7 +171,7 @@ export async function createCheckout(reservationId: string, points?: number): Pr
   let session: Stripe.Checkout.Session;
   try {
     session = await getStripe().checkout.sessions.create(buildSessionParams(reservation, event, base), {
-      idempotencyKey: checkoutIdempotencyKey(id),
+      idempotencyKey: checkoutIdempotencyKey(id, reservation.pointsUsed ?? 0),
     });
   } catch (err) {
     // PaymentUnavailableError (brak / zły klucz), StripeError (API, sieć, timeout) — klient dostaje 503.
