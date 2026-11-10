@@ -2,6 +2,7 @@
 // Karta B: formularz rezerwacji wybranego miejsca (/reserve?eventId=…&seatId=…).
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { LoyaltyBalance } from "@/components/loyalty/LoyaltyBalance";
 import { apiFetch, NETWORK_MESSAGE } from "@/components/reservation/api";
 import { type FieldErrors, type FormFields, validateFields } from "@/components/reservation/fields";
 import { mapAction, Notice, TIMETABLE_ACTION } from "@/components/reservation/Notice";
@@ -237,6 +238,7 @@ function ReservationForm({ event, seatId }: { event: TrainEvent; seatId: string 
           onChange={(v) => setFields((f) => ({ ...f, email: v }))}
           onBlur={() => setTouched((t) => ({ ...t, email: true }))}
         />
+        <LoyaltyBalance email={fields.email} price={event.price} />
 
         {outcome.kind === "error" && (
           <Notice tone="error" title="Nie udało się zarezerwować miejsca" autoFocus>
