@@ -257,7 +257,7 @@ describe("D5: getLegacyPurchase — biletu bez płatności nie ma", () => {
 });
 
 describe("getCheckoutCandidate i saveCheckoutSession (§6)", () => {
-  const session = { sessionId: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" };
+  const session = { sessionId: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1", pointsUsed: 0, cardAmount: 8900 };
 
   it("held: pełny dokument z e-mailem i kurs", async () => {
     const body = input({ seatId: "1-1" });
@@ -289,7 +289,7 @@ describe("getCheckoutCandidate i saveCheckoutSession (§6)", () => {
     const id = await reserve("1-4");
     await Promise.all(
       Array.from({ length: 10 }, (_, i) =>
-        saveCheckoutSession(id, i === 0 ? session : { sessionId: `cs_test_inna_${i}`, url: "https://example.com" }),
+        saveCheckoutSession(id, i === 0 ? session : { sessionId: `cs_test_inna_${i}`, url: "https://example.com", pointsUsed: 0, cardAmount: 8900 }),
       ),
     );
     const doc = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
@@ -297,7 +297,7 @@ describe("getCheckoutCandidate i saveCheckoutSession (§6)", () => {
     expect(doc?.payment?.createdAt).toBeInstanceOf(Date);
     const saved = doc!.payment!;
 
-    await saveCheckoutSession(id, { sessionId: "cs_test_pozniej", url: "https://example.com/pozniej" });
+    await saveCheckoutSession(id, { sessionId: "cs_test_pozniej", url: "https://example.com/pozniej", pointsUsed: 0, cardAmount: 8900 });
     const again = await (await reservationsCollection()).findOne({ _id: new ObjectId(id) });
     expect(again?.payment).toEqual(saved);
   });

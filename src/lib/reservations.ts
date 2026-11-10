@@ -4,6 +4,7 @@ import { ObjectId, type Collection } from "mongodb";
 import { getReservationTtlSeconds } from "@/lib/config";
 import { getDb, isDuplicateKeyError, RESERVATIONS_COLLECTION } from "@/lib/db";
 import { getEvent, hasDeparted } from "@/lib/events";
+import { settleLoyalty } from "@/lib/loyalty";
 import { syncCheckoutSession } from "@/lib/payments";
 import { isReservationId, normalizeTicketCode } from "@/lib/validation";
 import type {
@@ -156,6 +157,12 @@ export async function getReservation(id: string): Promise<ReservationResponse | 
       doc = (await reservations.findOne({ _id }, { projection: { email: 0 } })) ?? doc;
     }
   }
+  // [E3] Punkty pobrane za rezerwację, która przepadła, wracają na kartę (D17).
+  // TODO(Eryk): ponowienie earn i maila w stanie retry (CONTRACT.md §3 [E3]).
+  if (doc.loyalty?.spend?.status === "done" && doc.status !== "paid") {
+    await settleLoyalty({ reservationId: id });
+    doc = (await reservations.findOne({ _id }, { projection: { email: 0 } })) ?? doc;
+  }
 
   const now = new Date();
   const status = doc.status === "held" && doc.expiresAt <= now ? "expired" : doc.status;
@@ -170,8 +177,17 @@ export async function getReservation(id: string): Promise<ReservationResponse | 
     expiresAt: doc.expiresAt.toISOString(),
     serverNow: now.toISOString(),
     ...(status === "paid" && doc.code ? { code: doc.code } : {}),
+    ...pointsFields(doc, event),
+    pointsEarned: status === "paid" ? (doc.pointsEarned ?? 0) : null,
     event,
   };
+}
+
+/** [E3] pointsUsed i cardAmount — rezerwacje bez tych pól (Etap II, przed „Zapłać”) to 0 i pełna cena. */
+function pointsFields(doc: Pick<Reservation, "amount" | "pointsUsed" | "cardAmount">, event: TrainEvent) {
+  const amount = doc.amount ?? event.price;
+  const pointsUsed = doc.pointsUsed ?? 0;
+  return { pointsUsed, cardAmount: doc.cardAmount ?? amount - pointsUsed };
 }
 
 /** GET /api/tickets/:code — tylko opłacone bilety; pokazuje imię, bez e-maila (Z11). */
@@ -193,6 +209,8 @@ export async function getTicketByCode(code: string): Promise<TicketResponse | nu
     customerName: doc.customerName,
     amount: doc.amount ?? event.price,
     paidAt: (doc.paidAt ?? doc.createdAt).toISOString(),
+    ...pointsFields(doc, event),
+    pointsEarned: doc.pointsEarned ?? 0,
     event,
   };
 }
@@ -239,12 +257,105 @@ export async function getCheckoutCandidate(id: string): Promise<CheckoutCandidat
 /**
  * Zapisuje sesję Stripe atomowo i tylko raz: rezerwacja held bez sesji (§6). Przy równoległych
  * „Zapłać” wygrywa pierwszy zapis, a klucz idempotencji daje wszystkim tę samą sesję (D9).
+ * [E3] Z punktami: tylko gdy pobranie tej samej liczby punktów jest już zrobione (spend: done).
+ * Bez punktów: zapisuje pointsUsed 0 i cardAmount = amount, ale nie nadpisuje punktów już ustalonych.
  */
-export async function saveCheckoutSession(id: string, session: { sessionId: string; url: string }): Promise<void> {
+export async function saveCheckoutSession(
+  id: string,
+  session: { sessionId: string; url: string; pointsUsed: number; cardAmount: number },
+): Promise<void> {
   if (!isReservationId(id)) return;
   const reservations = await reservationsCollection();
+  const payment = { sessionId: session.sessionId, url: session.url, createdAt: new Date() };
+  if (session.pointsUsed > 0) {
+    await reservations.updateOne(
+      {
+        _id: new ObjectId(id),
+        status: "held",
+        "payment.sessionId": { $exists: false },
+        pointsUsed: session.pointsUsed,
+        "loyalty.spend.status": "done",
+      },
+      { $set: { payment } },
+    );
+    return;
+  }
   await reservations.updateOne(
-    { _id: new ObjectId(id), status: "held", "payment.sessionId": { $exists: false } },
-    { $set: { payment: { sessionId: session.sessionId, url: session.url, createdAt: new Date() } } },
+    {
+      _id: new ObjectId(id),
+      status: "held",
+      "payment.sessionId": { $exists: false },
+      $or: [{ pointsUsed: { $exists: false } }, { pointsUsed: 0 }],
+    },
+    { $set: { payment, pointsUsed: 0, cardAmount: session.cardAmount } },
+  );
+}
+
+// --- Etap III: punkty przy „Zapłać” (CONTRACT.md §3 [E3], §6) ---
+
+export type ClaimPointsSpendResult =
+  /** alreadySpent: te punkty już zeszły z karty (np. Stripe padł po pobraniu) — nie pobieraj drugi raz. */
+  | { ok: true; reservation: Reservation; alreadySpent: boolean }
+  | {
+      ok: false;
+      error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "ALREADY_PAID" | "POINTS_LOCKED" | "SPEND_IN_PROGRESS";
+      pointsUsed?: number;
+    };
+
+/**
+ * Atomowe zajęcie loyalty.spend (krok 4 checkoutu): zapisuje pointsUsed i cardAmount, spend: pending.
+ * Wygrywa jeden — tylko on woła Voucherify (Z38). Przegrany z tą samą liczbą punktów dostaje
+ * SPEND_IN_PROGRESS (czeka na url), z inną — POINTS_LOCKED (D16).
+ */
+export async function claimPointsSpend(id: string, points: number): Promise<ClaimPointsSpendResult> {
+  if (!isReservationId(id)) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  const reservations = await reservationsCollection();
+  const _id = new ObjectId(id);
+  const now = new Date();
+  const claimed = await reservations.findOneAndUpdate(
+    {
+      _id,
+      status: "held",
+      active: true,
+      expiresAt: { $gt: now },
+      "payment.sessionId": { $exists: false },
+      $or: [{ "loyalty.spend": { $exists: false } }, { "loyalty.spend.status": { $in: ["retry", "failed"] } }],
+    },
+    [
+      {
+        $set: {
+          pointsUsed: points,
+          cardAmount: { $subtract: ["$amount", points] },
+          "loyalty.spend": {
+            status: "pending",
+            points,
+            at: now,
+            attempts: { $add: [{ $ifNull: ["$loyalty.spend.attempts", 0] }, 1] },
+          },
+        },
+      },
+    ],
+    { returnDocument: "after" },
+  );
+  if (claimed) return { ok: true, reservation: claimed, alreadySpent: false };
+
+  const doc = await reservations.findOne({ _id });
+  if (!doc) return { ok: false, error: "RESERVATION_NOT_FOUND" };
+  if (doc.status === "paid") return { ok: false, error: "ALREADY_PAID" };
+  if (doc.status === "expired" || doc.expiresAt <= now || !doc.active) return { ok: false, error: "RESERVATION_EXPIRED" };
+  const used = doc.pointsUsed ?? 0;
+  if (used !== points) return { ok: false, error: "POINTS_LOCKED", pointsUsed: used };
+  if (doc.loyalty?.spend?.status === "done") return { ok: true, reservation: doc, alreadySpent: true };
+  return { ok: false, error: "SPEND_IN_PROGRESS", pointsUsed: used };
+}
+
+/** Koniec pobrania punktów: done zostawia pointsUsed; retry i failed je czyszczą (klient może wybrać inaczej). */
+export async function finishPointsSpend(id: string, status: "done" | "retry" | "failed"): Promise<void> {
+  if (!isReservationId(id)) return;
+  const reservations = await reservationsCollection();
+  const set = { "loyalty.spend.status": status, "loyalty.spend.at": new Date() };
+  await reservations.updateOne(
+    { _id: new ObjectId(id), "loyalty.spend.status": "pending" },
+    status === "done" ? { $set: set } : { $set: set, $unset: { pointsUsed: "", cardAmount: "" } },
   );
 }

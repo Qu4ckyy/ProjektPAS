@@ -191,7 +191,7 @@ describe("Z27: podpis", () => {
 describe("przyjęcie płatności", () => {
   it("checkout.session.completed → paid, kod, paidAt, paymentIntentId; odpowiedź { received: true }", async () => {
     const id = await reserve();
-    await saveCheckoutSession(id, { sessionId: `cs_test_${id}`, url: "https://checkout.stripe.com/c/pay/x" });
+    await saveCheckoutSession(id, { sessionId: `cs_test_${id}`, url: "https://checkout.stripe.com/c/pay/x", pointsUsed: 0, cardAmount: 8900 });
 
     const res = await postEvent(stripeEvent(paidSession(id)));
     expect(res.status, res.text).toBe(200);
@@ -428,7 +428,7 @@ describe("Z26: druga płatność za tę samą rezerwację", () => {
 
   it("płaci inna sesja niż zapisana: ona dostaje bilet, a zapisana potem idzie na zwrot", async () => {
     const id = await reserve();
-    await saveCheckoutSession(id, { sessionId: "cs_test_zapisana", url: "https://checkout.stripe.com/c/pay/zapisana" });
+    await saveCheckoutSession(id, { sessionId: "cs_test_zapisana", url: "https://checkout.stripe.com/c/pay/zapisana", pointsUsed: 0, cardAmount: 8900 });
 
     await postEvent(stripeEvent(paidSession(id, { id: "cs_test_inna", payment_intent: "pi_inna" })));
     const paid = (await findReservation(id))!;
@@ -573,7 +573,7 @@ describe("Z34: błędy po naszej stronie → 500, Stripe ponawia", () => {
 describe("Z31: GET rezerwacji synchronizuje sesję ze Stripe", () => {
   async function reserveWithSession(seatId?: string): Promise<string> {
     const id = await reserve(seatId);
-    await saveCheckoutSession(id, { sessionId: `cs_test_${id}`, url: "https://checkout.stripe.com/c/pay/x" });
+    await saveCheckoutSession(id, { sessionId: `cs_test_${id}`, url: "https://checkout.stripe.com/c/pay/x", pointsUsed: 0, cardAmount: 8900 });
     return id;
   }
 

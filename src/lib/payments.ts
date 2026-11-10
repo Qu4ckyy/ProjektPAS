@@ -4,6 +4,10 @@ import { randomBytes } from "node:crypto";
 import { ObjectId, type Collection } from "mongodb";
 import type Stripe from "stripe";
 import { getDb, isDuplicateKeyError, RESERVATIONS_COLLECTION, STRIPE_EVENTS_COLLECTION } from "@/lib/db";
+import { runAfterResponse } from "@/lib/after";
+import { earnForPurchase, settleLoyalty } from "@/lib/loyalty";
+import { sendTicketEmail } from "@/lib/mail";
+import { pointsEarnedFor } from "@/lib/points";
 import { getStripe } from "@/lib/stripe";
 import type { RefundReason, Reservation } from "@/lib/types";
 import { isReservationId } from "@/lib/validation";
@@ -82,7 +86,11 @@ export async function acceptPayment(session: Stripe.Checkout.Session, confirmedA
           _id: new ObjectId(reservationId),
           status: "held",
           active: true,
-          amount: session.amount_total,
+          // [E3] Sesja jest na cardAmount (amount − pointsUsed); rezerwacje sprzed Etapu III — na amount.
+          $or: [
+            { cardAmount: session.amount_total },
+            { cardAmount: { $exists: false }, amount: session.amount_total },
+          ],
           expiresAt: { $gt: new Date(confirmedAt - PAYMENT_GRACE_MS) },
         },
         {
@@ -90,6 +98,9 @@ export async function acceptPayment(session: Stripe.Checkout.Session, confirmedA
             status: "paid",
             code: generateCode(),
             paidAt: new Date(),
+            // [E3] Punkty za zakup od kwoty zapłaconej kartą (D18) — naliczenie po odpowiedzi.
+            pointsEarned: pointsEarnedFor(session.amount_total),
+            "loyalty.earn": { status: "pending", points: pointsEarnedFor(session.amount_total), at: new Date(), attempts: 1 },
             // Sesja, która zapłaciła — po niej rozpoznajemy powtórkę i drugą płatność.
             "payment.sessionId": session.id,
             ...(paymentIntentId ? { "payment.paymentIntentId": paymentIntentId } : {}),
@@ -97,6 +108,11 @@ export async function acceptPayment(session: Stripe.Checkout.Session, confirmedA
         },
         { returnDocument: "after", projection: { code: 1 } },
       );
+      if (paid?.code) {
+        await runAfterResponse("payments:after", () =>
+          Promise.allSettled([earnForPurchase(reservationId), sendTicketEmail(reservationId)]),
+        );
+      }
       return paid?.code ?? null;
     } catch (err) {
       // Kolizja kodu z unikalnym indeksem — losujemy nowy.
@@ -106,12 +122,12 @@ export async function acceptPayment(session: Stripe.Checkout.Session, confirmedA
 }
 
 function refundReason(
-  doc: Pick<Reservation, "status" | "amount" | "expiresAt">,
+  doc: Pick<Reservation, "status" | "amount" | "cardAmount" | "expiresAt">,
   session: Stripe.Checkout.Session,
   confirmedAt: number,
 ): RefundReason {
   if (doc.status === "paid") return "duplicate";
-  if (session.currency !== CURRENCY || session.amount_total !== doc.amount) return "amount_mismatch";
+  if (session.currency !== CURRENCY || session.amount_total !== (doc.cardAmount ?? doc.amount)) return "amount_mismatch";
   return doc.expiresAt.getTime() <= confirmedAt - PAYMENT_GRACE_MS ? "late" : "not_held";
 }
 
@@ -166,7 +182,7 @@ async function settleSession(
   const reservations = await reservationsCollection();
   const doc = await reservations.findOne(
     { _id },
-    { projection: { status: 1, amount: 1, expiresAt: 1, payment: 1 } },
+    { projection: { status: 1, amount: 1, cardAmount: 1, expiresAt: 1, payment: 1, loyalty: 1 } },
   );
   if (!doc) {
     console.warn(`[payments] Sesja ${session.id}: rezerwacja ${reservationId} nie istnieje — pomijam.`);
@@ -179,6 +195,8 @@ async function settleSession(
   }
 
   await refundSession(reservations, _id, session, refundReason(doc, session, confirmedAt));
+  // [E3] Spóźniona płatność rezerwacji z punktami: oddajemy też punkty (Z40).
+  if (doc.status !== "paid" && doc.loyalty?.spend?.status === "done") await settleLoyalty({ reservationId });
   return { reservationId, outcome: "refunded" };
 }
 

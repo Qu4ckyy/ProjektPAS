@@ -3,7 +3,7 @@
 import { MongoServerError, type Collection } from "mongodb";
 import { getDb } from "@/lib/db";
 
-export type RateLimitBucket = "reservations" | "checkout";
+export type RateLimitBucket = "reservations" | "checkout" | "loyalty"; // [E3] loyalty: saldo i podpowiedź punktów
 
 export type RateLimitResult = { ok: true } | { ok: false; retryAfterSeconds: number };
 

@@ -45,6 +45,7 @@ function ensureIndexesOnce(db: Db): Promise<void> {
 
 export const RESERVATIONS_COLLECTION = "reservations";
 export const STRIPE_EVENTS_COLLECTION = "stripe_events";
+export const LOYALTY_MEMBERS_COLLECTION = "loyalty_members";
 
 /** E11000: naruszenie unikalnego indeksu. */
 export function isDuplicateKeyError(err: unknown): boolean {
@@ -76,7 +77,12 @@ export async function ensureIndexes(db: Db): Promise<void> {
     { key: { eventId: 1, active: 1 }, name: "event_active" },
     // Sesja Stripe → rezerwacja (stripe_events ma unikalne _id, nie potrzebuje indeksów).
     { key: { "payment.sessionId": 1 }, name: "payment_session" },
+    // [E3] Zwroty punktów dla e-maila, dzienny cron, naliczenia do ponowienia (§2).
+    { key: { email: 1, "loyalty.spend.status": 1 }, name: "email_loyalty_spend" },
+    { key: { "loyalty.spend.status": 1, expiresAt: 1 }, name: "loyalty_spend_expires" },
+    { key: { status: 1, "loyalty.earn.status": 1 }, name: "status_loyalty_earn" },
   ]);
+  // loyalty_members: wystarczy unikalne _id (e-mail).
 }
 
 /** Do skryptów (seed, reset, testy) — zamyka połączenie, żeby proces mógł się zakończyć. */

@@ -1,14 +1,34 @@
 // Przejście do płatności Stripe Checkout — CONTRACT.md §3, D9, D10, Z26, Z29, Z33, Z34. Właściciel: Kamil.
+// [E3] Z punktami: D15, D16, D22, §3 „Checkout z punktami”. STUB części punktowej — dopracowuje Kamil.
 import type Stripe from "stripe";
-import { formatDate, formatTime } from "@/lib/format";
+import { formatDate, formatPrice, formatTime } from "@/lib/format";
+import { maxPointsFor } from "@/lib/points";
 import { getCheckoutCandidate, saveCheckoutSession } from "@/lib/reservations";
 import { seatLabel } from "@/lib/seats";
+import { spendPointsForCheckout } from "@/lib/spend";
 import { getStripe } from "@/lib/stripe";
 import type { Reservation, TrainEvent } from "@/lib/types";
 
 export type CreateCheckoutResult =
-  | { ok: true; url: string }
-  | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "ALREADY_PAID" | "PAYMENT_UNAVAILABLE" };
+  | { ok: true; url: string; pointsUsed: number; cardAmount: number }
+  | {
+      ok: false;
+      error:
+        | "RESERVATION_NOT_FOUND"
+        | "RESERVATION_EXPIRED"
+        | "ALREADY_PAID"
+        | "PAYMENT_UNAVAILABLE"
+        | "LOYALTY_BUSY"
+        | "LOYALTY_UNAVAILABLE";
+    }
+  | { ok: false; error: "POINTS_OVER_LIMIT"; maxPoints: number }
+  | { ok: false; error: "POINTS_LOCKED"; pointsUsed: number }
+  | { ok: false; error: "INSUFFICIENT_POINTS"; balance: number };
+
+/** Kwota sesji Stripe: cardAmount, a dla rezerwacji bez ustalonych punktów — pełna cena. */
+function cardAmountOf(reservation: Reservation): number {
+  return reservation.cardAmount ?? reservation.amount - (reservation.pointsUsed ?? 0);
+}
 
 /**
  * APP_URL bez "/" na końcu (D10) — jedyne źródło adresów powrotu, nigdy nagłówek Host (Z33).
@@ -49,16 +69,23 @@ export function buildSessionParams(
         quantity: 1,
         price_data: {
           currency: "pln",
-          unit_amount: reservation.amount,
+          unit_amount: cardAmountOf(reservation),
           product_data: {
             name: event.title,
-            description: `${seatLabel(reservation.seatId)} · ${formatDate(event.startsAt)}, odjazd ${formatTime(event.startsAt)}`,
+            description:
+              `${seatLabel(reservation.seatId)} · ${formatDate(event.startsAt)}, odjazd ${formatTime(event.startsAt)}` +
+              ((reservation.pointsUsed ?? 0) > 0 ? ` · punkty: −${formatPrice(reservation.pointsUsed ?? 0)}` : ""),
           },
         },
       },
     ],
     client_reference_id: reservationId,
-    metadata: { reservationId, eventId: reservation.eventId, seatId: reservation.seatId },
+    metadata: {
+      reservationId,
+      eventId: reservation.eventId,
+      seatId: reservation.seatId,
+      pointsUsed: String(reservation.pointsUsed ?? 0),
+    },
     customer_email: reservation.email,
     locale: "pl",
     success_url: `${baseUrl}/payment/success?${query}`,
@@ -71,11 +98,34 @@ export function buildSessionParams(
  * równoległe pierwsze kliknięcia dostają tę samą sesję dzięki kluczowi idempotencji (D9, Z4, Z26).
  * Błąd Stripe → PAYMENT_UNAVAILABLE, rezerwacja nietknięta, szczegóły tylko w logach (Z34).
  */
-export async function createCheckout(reservationId: string): Promise<CreateCheckoutResult> {
+export async function createCheckout(reservationId: string, points?: number): Promise<CreateCheckoutResult> {
   const candidate = await getCheckoutCandidate(reservationId);
   if (!candidate.ok) return candidate;
-  const { reservation, event } = candidate;
-  if (reservation.payment?.url) return { ok: true, url: reservation.payment.url };
+  const { event } = candidate;
+  let { reservation } = candidate;
+
+  // D16: po pierwszym „Zapłać” punkty są zablokowane; ten sam url bez Stripe i bez Voucherify.
+  if (reservation.payment?.url) {
+    const used = reservation.pointsUsed ?? 0;
+    if (points !== undefined && points !== used) return { ok: false, error: "POINTS_LOCKED", pointsUsed: used };
+    return { ok: true, url: reservation.payment.url, pointsUsed: used, cardAmount: cardAmountOf(reservation) };
+  }
+
+  const maxPoints = maxPointsFor(reservation.amount);
+  if (points !== undefined && points > maxPoints) return { ok: false, error: "POINTS_OVER_LIMIT", maxPoints };
+  if (points !== undefined && points > 0) {
+    // Punkty schodzą przed sesją Stripe (D15); bez spend: done nie ma sesji ze zniżką (Z44).
+    const spend = await spendPointsForCheckout(reservationId, points);
+    if (!spend.ok) return spend;
+    reservation = spend.reservation;
+  } else if ((reservation.pointsUsed ?? 0) > 0) {
+    // Punkty już pobrane wcześniej (Stripe padł po pobraniu) — bez points w body zostają te same.
+    if (reservation.loyalty?.spend?.status !== "done") {
+      return { ok: false, error: "POINTS_LOCKED", pointsUsed: reservation.pointsUsed ?? 0 };
+    }
+  }
+  const pointsUsed = reservation.pointsUsed ?? 0;
+  const cardAmount = cardAmountOf(reservation);
 
   const base = appUrl();
   if (!base) {
@@ -96,7 +146,9 @@ export async function createCheckout(reservationId: string): Promise<CreateCheck
     // jednoczesne żądania z jednym kluczem) — wtedy oddajemy jej url zamiast 503.
     const again = await getCheckoutCandidate(id);
     if (!again.ok) return again;
-    if (again.reservation.payment?.url) return { ok: true, url: again.reservation.payment.url };
+    if (again.reservation.payment?.url) {
+      return { ok: true, url: again.reservation.payment.url, pointsUsed, cardAmount };
+    }
     return { ok: false, error: "PAYMENT_UNAVAILABLE" };
   }
   if (!session.url) {
@@ -104,6 +156,6 @@ export async function createCheckout(reservationId: string): Promise<CreateCheck
     return { ok: false, error: "PAYMENT_UNAVAILABLE" };
   }
 
-  await saveCheckoutSession(id, { sessionId: session.id, url: session.url });
-  return { ok: true, url: session.url };
+  await saveCheckoutSession(id, { sessionId: session.id, url: session.url, pointsUsed, cardAmount });
+  return { ok: true, url: session.url, pointsUsed, cardAmount };
 }

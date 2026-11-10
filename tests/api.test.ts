@@ -302,9 +302,24 @@ describe("GET /api/reservations/:id", () => {
     const res = await apiGetReservation(id);
     expect(res.status).toBe(200);
     expect(Object.keys(res.body as object).sort()).toEqual(
-      ["amount", "customerName", "event", "eventId", "expiresAt", "reservationId", "seatId", "serverNow", "status"].sort(),
+      [
+        "amount",
+        "cardAmount",
+        "customerName",
+        "event",
+        "eventId",
+        "expiresAt",
+        "pointsEarned",
+        "pointsUsed",
+        "reservationId",
+        "seatId",
+        "serverNow",
+        "status",
+      ].sort(),
     );
     expect(res.body).toMatchObject({ reservationId: id, eventId: FUTURE_EVENT._id, seatId: "2-1", status: "held" });
+    // [E3] Przed „Zapłać” bez punktów, pointsEarned dopiero po opłaceniu.
+    expect(res.body).toMatchObject({ pointsUsed: 0, cardAmount: TEST_PRICE, pointsEarned: null });
     expect((res.body as { event: unknown }).event).toEqual(FUTURE_EVENT);
     expectIso((res.body as { expiresAt: string }).expiresAt);
     expectIso((res.body as { serverNow: string }).serverNow);
@@ -350,7 +365,9 @@ describe("GET /api/tickets/:code", () => {
     for (const variant of [code, code.toLowerCase(), ` ${code} `]) {
       const res = await apiGetTicket(variant);
       expect(res.status).toBe(200);
-      expect(Object.keys(res.body as object).sort()).toEqual(["amount", "code", "customerName", "event", "paidAt", "seatId"]);
+      expect(Object.keys(res.body as object).sort()).toEqual(
+        ["amount", "cardAmount", "code", "customerName", "event", "paidAt", "pointsEarned", "pointsUsed", "seatId"].sort(),
+      );
       expect(res.body).toMatchObject({ code, seatId: "2-4" });
       expect((res.body as { event: unknown }).event).toEqual(FUTURE_EVENT);
       expectIso((res.body as { paidAt: string }).paidAt);
