@@ -287,8 +287,30 @@ describe("punkty za zakup (D18, Z41, Z42)", () => {
     const paid = await doc(id);
     expect(paid).toMatchObject({ status: "paid", pointsUsed: 1000, cardAmount: 7900, pointsEarned: 790 });
     expect(fake.balanceOf(email)).toBe(790);
+    // Budżet (§3): saldo 1 + klient, członek, +1000, sprawdzenie 4 + pobranie i sprawdzenie 2 + naliczenie 1.
+    expect(fake.count()).toBe(8);
     expect(await getTicketByCode(paid!.code!)).toMatchObject({ pointsUsed: 1000, cardAmount: 7900, pointsEarned: 790 });
     expect((await apiLoyalty(`?email=${encodeURIComponent(email)}`)).body).toEqual({ email, points: 790 });
+  });
+
+  it("budżet dla znanego klienta: zakup bez punktów 1 wywołanie, z punktami 4", async () => {
+    const email = "staly@example.com";
+    fake.addMemberFromPanel(email, 2000);
+    await ensureMember(email);
+    fake.calls.length = 0;
+
+    const withoutPoints = await reserve(email);
+    await checkoutWithoutPoints(withoutPoints);
+    await postEvent(stripeEvent(paidSession(withoutPoints)));
+    expect(fake.calls.map((c) => c.op)).toEqual(["addPoints"]);
+
+    fake.calls.length = 0;
+    const withPoints = await reserve(email);
+    expect(await getFreshBalance(email)).toBe(2890);
+    await payWithPoints(withPoints, email, 1000);
+    await postEvent(stripeEvent(paidSession(withPoints, { amount_total: 7900 })));
+    expect(fake.calls.map((c) => c.op)).toEqual(["findMember", "addPoints", "getTransaction", "addPoints"]);
+    expect(fake.balanceOf(email)).toBe(2890 - 1000 + 790);
   });
 
   it("Z41: ten sam webhook 2×, drugie zdarzenie sesji i 5× GET → punkty naliczone raz", async () => {
