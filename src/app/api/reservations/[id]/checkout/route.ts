@@ -16,28 +16,40 @@ const NO_STORE = { "Cache-Control": "no-store" };
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * Body puste albo bez points → undefined (jak w Etapie II). points: liczba całkowita ≥ 0 (Z37).
- * STUB walidacji — dopracowuje Kamil (PROMPTY K3, punkt 1).
+ * Body checkoutu (D22, Z37, Z53): liczy się tylko points, każde inne pole (np. amount) ignorujemy.
+ * - puste (albo same białe znaki), {} albo bez points → undefined — dla checkoutu to points 0,
+ *   a przy już ustalonych punktach „te same co wcześniej” (D16),
+ * - nie-JSON, nie-obiekt (tablica, null, liczba, string) albo > 10 kB → błąd,
+ * - points: Number.isSafeInteger i ≥ 0; string "100", 1.5, −1, null, obiekt, 1e300 → błąd.
+ * Limit points ≤ maxPointsFor(amount) sprawdza createCheckout — potrzebuje kwoty z bazy.
  */
-async function readPoints(req: Request): Promise<Validation<number | undefined>> {
+async function readCheckoutPoints(req: Request): Promise<Validation<number | undefined>> {
   const body = await readBodyBytes(req, MAX_BODY_BYTES);
   if (!body.ok) return body;
-  if (body.value.length === 0) return { ok: true, value: undefined };
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(body.value);
+  } catch {
+    return { ok: false, message: "Treść żądania nie jest poprawnym UTF-8." };
+  }
+  if (text.trim() === "") return { ok: true, value: undefined };
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body.value));
+    parsed = JSON.parse(text);
   } catch {
     return { ok: false, message: "Nieprawidłowy JSON w treści żądania." };
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return { ok: false, message: "Oczekiwano obiektu JSON, np. { \"points\": 1000 }." };
   }
-  const points = (parsed as Record<string, unknown>).points;
-  if (points === undefined) return { ok: true, value: undefined };
+  // Tylko własne pole — nie dziedziczone z prototypu.
+  if (!Object.hasOwn(parsed, "points")) return { ok: true, value: undefined };
+  const points: unknown = (parsed as { points?: unknown }).points;
   if (typeof points !== "number" || !Number.isSafeInteger(points) || points < 0) {
     return { ok: false, message: "Pole points musi być liczbą całkowitą nie mniejszą niż 0." };
   }
-  return { ok: true, value: points };
+  // -0 → 0, żeby do Stripe nie trafiło "-0" w metadata.
+  return { ok: true, value: points === 0 ? 0 : points };
 }
 
 export const POST = withErrorHandling(
@@ -46,7 +58,7 @@ export const POST = withErrorHandling(
     const limit = await rateLimit(req, "checkout");
     if (!limit.ok) return rateLimited(limit.retryAfterSeconds);
 
-    const points = await readPoints(req);
+    const points = await readCheckoutPoints(req);
     if (!points.ok) return jsonError(400, "VALIDATION_ERROR", points.message);
 
     const { id } = await params;
