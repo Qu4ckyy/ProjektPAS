@@ -1,6 +1,7 @@
 // GET /api/reservations/:id/points — podpowiedź do pola „Użyj punktów” (CONTRACT.md §3 [E3]). Właściciel: Kamil.
-// E-mail z rezerwacji, nigdy z URL; odpowiedź go nie zawiera.
-// STUB — dopracowuje Kamil (PROMPTY K3, punkt 6).
+// E-mail z rezerwacji, nigdy z URL (parametry zapytania ignorujemy); odpowiedź go nie zawiera (Z11).
+// balance z getPoints (najpierw zaległe zwroty, D17); locked = rezerwacja ma sesję Stripe (D16) → maxPoints = pointsUsed.
+// Voucherify niedostępny → 503 LOYALTY_UNAVAILABLE (D20); płacić bez punktów można dalej.
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 import { getDb, RESERVATIONS_COLLECTION } from "@/lib/db";
@@ -41,7 +42,7 @@ export const GET = withErrorHandling("GET /api/reservations/:id/points", async (
     const balance = await getPoints(reservation.email);
     const res: ReservationPointsResponse = {
       balance,
-      maxPoints: locked ? pointsUsed : Math.min(balance, maxPointsFor(reservation.amount)),
+      maxPoints: locked ? pointsUsed : Math.max(0, Math.min(balance, maxPointsFor(reservation.amount))),
       pointsUsed,
       locked,
     };
