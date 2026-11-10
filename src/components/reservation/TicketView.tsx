@@ -1,9 +1,9 @@
 "use client";
-// Karta C: bilet z kodem — relacja, odjazd, wagon i miejsce, kod.
+// Karta C: bilet z kodem — relacja, odjazd, wagon i miejsce, kod, [E3] podsumowanie płatności i punktów.
 import Link from "next/link";
 import { COMPANY_NAME, Logo } from "@/components/brand/Logo";
-import { formatDate, formatDuration, formatPrice, formatTime } from "@/lib/format";
-import { formatPoints } from "@/lib/points";
+import { PaymentSummary } from "@/components/loyalty/PaymentSummary";
+import { formatDate, formatDuration, formatTime } from "@/lib/format";
 import { isWindow, parseSeatId } from "@/lib/seats";
 import type { TicketResponse } from "@/lib/types";
 
@@ -16,6 +16,8 @@ export function TicketView({ ticket }: { ticket: TicketResponse }) {
       <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 print:hidden">
         <p className="font-semibold">Bilet opłacony. Szczęśliwej podróży!</p>
         <p className="text-sm">Zachowaj kod — pokażesz go konduktorowi. Ten adres możesz zapisać lub wydrukować.</p>
+        {/* „Wysyłamy”, nie „wysłaliśmy”: mail mógł nie dojść, a strona nie zna adresu (D19). */}
+        <p className="text-sm">Wysyłamy bilet także na Twój e-mail.</p>
       </div>
 
       <article
@@ -52,20 +54,18 @@ export function TicketView({ ticket }: { ticket: TicketResponse }) {
             <TicketField label="Czas przejazdu" value={formatDuration(event.startsAt, event.arrivesAt)} />
             <TicketField label="Pasażer" value={ticket.customerName} wide />
           </dl>
+          <PaymentSummary
+            cardAmount={ticket.cardAmount}
+            pointsUsed={ticket.pointsUsed}
+            pointsEarned={ticket.pointsEarned}
+          />
         </div>
 
         <div className="border-t-2 border-dashed border-neutral-300 bg-neutral-50 px-5 py-4 text-center print:bg-white">
           <p className="text-xs font-medium tracking-wide text-neutral-500 uppercase">Kod biletu</p>
           <p className="mt-1 font-mono text-4xl font-bold tracking-[0.2em] text-neutral-900">{ticket.code}</p>
           <p className="mt-1 text-xs text-neutral-500">
-            Kartą {formatPrice(ticket.cardAmount)}
-            {ticket.pointsUsed > 0 && (
-              <>
-                {" "}
-                · punktami {formatPoints(ticket.pointsUsed)} ({formatPrice(ticket.pointsUsed)})
-              </>
-            )}{" "}
-            · zebrane punkty: {ticket.pointsEarned} · {formatDate(ticket.paidAt)}, {formatTime(ticket.paidAt)}
+            Opłacono {formatDate(ticket.paidAt)}, {formatTime(ticket.paidAt)}
           </p>
         </div>
       </article>

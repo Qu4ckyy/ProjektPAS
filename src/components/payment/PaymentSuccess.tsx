@@ -7,6 +7,7 @@ import { isPaymentPending, usePaymentStatus } from "@/components/payment/usePaym
 import { mapAction, Notice, TIMETABLE_ACTION } from "@/components/reservation/Notice";
 import { TripSummary } from "@/components/reservation/TripSummary";
 import { formatPrice } from "@/lib/format";
+import { formatPoints } from "@/lib/points";
 
 export function PaymentSuccess() {
   const router = useRouter();
@@ -49,7 +50,7 @@ export function PaymentSuccess() {
           actions={[mapAction(reservation.eventId), TIMETABLE_ACTION]}
           autoFocus
         >
-          Miejsce wróciło do puli. Jeśli pobraliśmy pieniądze, zwrócimy je automatycznie na Twoją kartę.
+          Miejsce wróciło do puli. Jeśli pobraliśmy pieniądze, zwrócimy je automatycznie na Twoją kartę, a użyte punkty wrócą na Twoje konto.
         </Notice>
         <TripSummary event={reservation.event} seatId={reservation.seatId} />
       </Shell>
@@ -93,7 +94,7 @@ export function PaymentSuccess() {
           <p className="font-semibold">Czekamy na potwierdzenie płatności od Stripe…</p>
           <p className="text-sm">
             {state.kind === "loaded"
-              ? `Kwota: ${formatPrice(state.reservation.amount)}. Bilet z kodem pojawi się tu sam — nie zamykaj strony.`
+              ? `Kwota: ${formatPrice(state.reservation.cardAmount)}${state.reservation.pointsUsed > 0 ? ` + ${formatPoints(state.reservation.pointsUsed)}` : ""}. Bilet z kodem pojawi się tu sam — nie zamykaj strony.`
               : "Bilet z kodem pojawi się tu sam — nie zamykaj strony."}
           </p>
         </div>
