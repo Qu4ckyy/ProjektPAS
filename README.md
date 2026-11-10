@@ -2,7 +2,7 @@
 
 System rezerwacji miejsc w pociągach z płatnością Stripe (tryb testowy). Next.js 15 (App Router) + TypeScript + Tailwind + MongoDB Atlas + Stripe, wdrożenie na Vercel.
 
-**Źródło prawdy: [CONTRACT.md](CONTRACT.md).** Prompty dla agentów: [PROMPTY.md](PROMPTY.md). Wdrożenie: [DEPLOY.md](DEPLOY.md). Demo: [DEMO.md](DEMO.md).
+**Źródło prawdy: [CONTRACT.md](CONTRACT.md).** Prompty z wcześniejszych etapów: [PROMPTY-ETAP-1.md](PROMPTY-ETAP-1.md), [PROMPTY-ETAP-2.md](PROMPTY-ETAP-2.md). Wdrożenie: [DEPLOY.md](DEPLOY.md). Demo: [DEMO.md](DEMO.md).
 
 ## Uruchomienie
 
