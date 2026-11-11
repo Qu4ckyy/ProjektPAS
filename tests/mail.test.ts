@@ -187,6 +187,16 @@ describe("sendTicketEmail — Resend", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect((await ticketEmailOf(retry))?.status).toBe("sent");
   });
+
+  it("retryTicketEmails wysyła też mail, którego nikt nie zaczął (after() padło), ale nie świeżo opłacony", async () => {
+    fetchMock.mockImplementation(async () => resendResponse(200, { id: "re_msg_orphan" }));
+    const orphan = await insertReservation({ paidAt: new Date(Date.now() - 10 * 60_000) });
+    const fresh = await insertReservation({ paidAt: new Date() });
+
+    expect(await retryTicketEmails()).toBe(1);
+    expect((await ticketEmailOf(orphan))?.status).toBe("sent");
+    expect(await ticketEmailOf(fresh)).toBeUndefined();
+  });
 });
 
 describe("buildTicketEmail — treść (Z48)", () => {

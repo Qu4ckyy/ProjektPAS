@@ -262,7 +262,7 @@ export async function sendTicketEmail(reservationId: string): Promise<void> {
   }
 }
 
-/** Dzienny cron (i ponowienia): zaległe retry i przerwane sending. Zwraca liczbę wysłanych. */
+/** Dzienny cron (i ponowienia): zaległe retry, przerwane sending i nigdy niezaczęte. Zwraca liczbę wysłanych. */
 export async function retryTicketEmails(): Promise<number> {
   const reservations = await reservationsCollection();
   const staleBefore = new Date(Date.now() - STALE_SENDING_MS);
@@ -270,10 +270,15 @@ export async function retryTicketEmails(): Promise<number> {
     .find(
       {
         status: "paid",
-        "ticketEmail.attempts": { $lt: MAX_EMAIL_ATTEMPTS },
         $or: [
-          { "ticketEmail.status": "retry" },
-          { "ticketEmail.status": "sending", "ticketEmail.at": { $lt: staleBefore } },
+          { "ticketEmail.status": "retry", "ticketEmail.attempts": { $lt: MAX_EMAIL_ATTEMPTS } },
+          {
+            "ticketEmail.status": "sending",
+            "ticketEmail.at": { $lt: staleBefore },
+            "ticketEmail.attempts": { $lt: MAX_EMAIL_ATTEMPTS },
+          },
+          // after() padło, zanim ktoś zajął wysyłkę — mail nigdy nie ruszył (uwaga Eryka do PR #19).
+          { ticketEmail: { $exists: false }, paidAt: { $lt: staleBefore } },
         ],
       },
       { projection: { _id: 1 } },

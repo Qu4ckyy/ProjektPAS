@@ -13,8 +13,8 @@ Zmiany względem Etapu I są oznaczone **[E2]**, względem Etapu II — **[E3]**
 
 | # | Decyzja |
 |---|---|
-| D12 | **Źródłem prawdy o saldzie jest Voucherify** (kampania lojalnościowa, API v1 jak w PDF). U siebie trzymamy tylko: ile punktów użyła i zebrała rezerwacja (`pointsUsed`, `pointsEarned`, `loyalty` w §2) oraz mapę e-mail → karta w kolekcji `loyalty_members` (żeby nie szukać karty przy każdym wywołaniu — limit sandboxa to 100 wywołań na godzinę). |
-| D13 | Klient = e-mail po `trim()` i `toLowerCase()`. To `source_id` klienta w Voucherify. `Jan@Example.com` i `jan@example.com` to ten sam klient. |
+| D12 | **Źródłem prawdy o saldzie jest Voucherify** — Loyalty Hub (**API v2**): program `lprg_1353662608979a6d4e` „Konduktor punkty”, portfel `lcdef_135367367d579a1d98` „Punkty” (bez wygasania, ujemne saldo zablokowane, punkty aktywne od razu). PDF podaje endpoint v1 (`/v1/loyalties/members/{memberId}/balance`), ale nowe konta Voucherify mają już tylko Loyalty Hub v2, a modeli nie da się mieszać — jego odpowiednikiem jest `POST /v2/…/cards/{cardId}/points` (§3). U siebie trzymamy tylko: ile punktów użyła i zebrała rezerwacja (`pointsUsed`, `pointsEarned`, `loyalty` w §2) oraz mapę e-mail → karta w kolekcji `loyalty_members` (żeby nie szukać karty przy każdym wywołaniu — limit sandboxa to 100 wywołań na godzinę). |
+| D13 | Klient = e-mail po `trim()` i `toLowerCase()`. To `source_id` klienta w Voucherify (`customer_source_id` w v2). `Jan@Example.com` i `jan@example.com` to ten sam klient. |
 | D14 | **Karty nie zakładamy przy samym sprawdzeniu salda.** E-mail bez karty ma 1000 punktów, ale kartę (i 1000 punktów powitalnych na niej) tworzymy dopiero przy pierwszym wydaniu albo naliczeniu punktów. Punkty powitalne dodaje nasz kod, dokładnie raz na e-mail (§3, Z51). |
 | D15 | **Punkty schodzą przy „Zapłać”**, przed utworzeniem sesji Stripe (karta B z PDF). Sesja Stripe jest na `cardAmount = amount − pointsUsed`. |
 | D16 | **Punkty są zablokowane po pierwszym „Zapłać”.** Ponowne „Zapłać” z tą samą liczbą punktów albo bez `points` → ten sam `url` (D9 dalej obowiązuje). Inna liczba punktów → `409 POINTS_LOCKED`. Jedna sesja Stripe na rezerwację, klucz idempotencji bez zmian. |
@@ -37,7 +37,7 @@ Zmiany względem Etapu I są oznaczone **[E2]**, względem Etapu II — **[E3]**
 | D6 | **Kryterium B1:** identyczny `POST /api/reservations` (ten sam kurs, miejsce, imię i e-mail) zwraca tę samą rezerwację (`200`), a nie `409`. |
 | D7 | **Kryterium B5:** limit 40 żądań / 10 s / IP na `POST /api/reservations` i `POST /api/reservations/:id/checkout` → `429 RATE_LIMITED` z nagłówkiem `Retry-After`. Webhook nie ma limitu. |
 | D8 | Płatność przyjmujemy tylko wtedy, gdy Stripe potwierdził ją najpóźniej 10 s po `expiresAt` i rezerwacja nadal trzyma miejsce. W każdym innym przypadku (spóźniona, druga za tę samą rezerwację, zła kwota) **automatyczny zwrot** i brak biletu. |
-| D9 | Jedna sesja Stripe na rezerwację: klucz idempotencji `checkout-<reservationId>`. Ponowne „Zapłać” (po kolei albo równolegle) daje ten sam `url`. |
+| D9 | Jedna sesja Stripe na rezerwację: klucz idempotencji `checkout-<reservationId>`. Ponowne „Zapłać” (po kolei albo równolegle) daje ten sam `url`. **[E3]** Z punktami klucz `checkout-<reservationId>-p<pointsUsed>` — Stripe odrzuca ten sam klucz z inną kwotą, więc równoległe „Zapłać” bez punktów i z punktami nie mogą się zablokować. Do klienta trafia tylko sesja zapisana w rezerwacji. |
 | D10 | Adresy powrotu budujemy z `APP_URL` (env), nigdy z nagłówka `Host`. |
 | D11 | Serwer przyjmuje tylko klucz `sk_test_…`. Klucz `sk_live_…` → płatności wyłączone (`503`). |
 
@@ -46,7 +46,7 @@ Zmiany względem Etapu I są oznaczone **[E2]**, względem Etapu II — **[E3]**
 - Next.js 15 (App Router) + TypeScript (strict) + Tailwind + ESLint, katalog `src/`, alias `@/*`.
 - MongoDB Atlas, oficjalny driver `mongodb` (v6). Bez Mongoose.
 - **[E2]** Stripe: oficjalna paczka `stripe` (Node), wyłącznie tryb testowy. Lokalnie webhooki przekierowuje Stripe CLI: `stripe listen --forward-to localhost:3000/api/webhooks/stripe`.
-- **[E3]** Voucherify: zwykły `fetch` do REST API v1 (bez SDK), nagłówki `X-App-Id` i `X-App-Token`, projekt **Sandbox**, kampania lojalnościowa. Każde wywołanie z timeoutem 5 s. Sandbox: **100 wywołań na godzinę** na cały projekt — liczymy je (§3, „Budżet wywołań”).
+- **[E3]** Voucherify: zwykły `fetch` do REST API (bez SDK) — Loyalty Hub **v2** (`/v2/loyalties/programs/…`) plus `/v1/customers` do założenia klienta; nagłówki `X-App-Id` i `X-App-Token`, projekt **Sandbox**, region Europe (`https://api.voucherify.io`). Każde wywołanie z timeoutem 5 s. **Zmiana punktów w v2 jest asynchroniczna:** odpowiedź to transakcja `lctx_…` w stanie `PENDING`, a o wyniku (`APPROVED` / `REJECTED`) mówi dopiero lista transakcji karty (§3, „Operacje na punktach”). Sandbox: **100 wywołań na godzinę** na cały projekt — liczymy je (§3, „Budżet wywołań”).
 - **[E3]** Resend: zwykły `fetch` do `POST https://api.resend.com/emails` (bez SDK), `Authorization: Bearer re_…`, nadawca `onboarding@resend.dev`. Bez własnej domeny Resend dostarcza tylko na adres właściciela konta i adresy testowe (`delivered@resend.dev`, `bounced@resend.dev`, z dowolną etykietą po `+`); inny adres → `403` od Resend, czyli mail „failed” (D19).
 - Wdrożenie: Vercel (region `fra1`, klaster Atlas we Frankfurcie).
 - Zmienne środowiskowe (`.env.local`, wzór w `.env.example`). **Klucze tylko na serwerze: nigdy w repo, nigdy z prefiksem `NEXT_PUBLIC_`, nigdy w odpowiedzi API.**
@@ -65,7 +65,8 @@ Zmiany względem Etapu I są oznaczone **[E2]**, względem Etapu II — **[E3]**
 | **[E3]** `VOUCHERIFY_API_URL` | `https://api.voucherify.io` | adres klastra z Project settings → Application keys (bez `/` na końcu) |
 | **[E3]** `VOUCHERIFY_APP_ID` | `…` | Application ID projektu Sandbox |
 | **[E3]** `VOUCHERIFY_SECRET_KEY` | `…` | Secret Key projektu Sandbox (nagłówek `X-App-Token`) |
-| **[E3]** `VOUCHERIFY_CAMPAIGN_ID` | `camp_…` | id kampanii lojalnościowej |
+| **[E3]** `VOUCHERIFY_PROGRAM_ID` | `lprg_1353662608979a6d4e` | id programu w Loyalty Hub (to nie sekret) |
+| **[E3]** `VOUCHERIFY_CARD_DEFINITION_ID` | `lcdef_135367367d579a1d98` | id portfela „Punkty” — z kart klienta bierzemy tę z tym portfelem |
 | **[E3]** `MAIL_PROVIDER` | `resend` | `resend` albo `log` (testy, lokalnie); na Vercelu tylko `resend` (D21) |
 | **[E3]** `RESEND_API_KEY` | `re_…` | klucz API Resend (uprawnienie „Sending access”) |
 | **[E3]** `MAIL_FROM` | `Konduktor <onboarding@resend.dev>` | nadawca maili |
@@ -148,7 +149,7 @@ type LoyaltyStep = { status: "pending" | "done" | "retry" | "failed"; points: nu
 **[E3] Zasady pól lojalnościowych:**
 - Brak `pointsUsed` w dokumencie (rezerwacje z Etapu II, rezerwacja przed „Zapłać”) = `0` w API.
 - Operację w Voucherify wolno zacząć tylko po atomowym `findOneAndUpdate`, który przestawia jej krok z „brak/`retry`” na `pending`. Kto nie wygrał, nie woła Voucherify. Dzięki temu podwójny klik, powtórzony webhook i równoległy GET nie wykonują operacji dwa razy.
-- Krok w `pending` dłużej niż 2 minuty uznajemy za przerwany (padła funkcja na Vercelu). Wtedy przed ponowieniem **sprawdzamy w Voucherify**, czy operacja już przeszła (§3, „Pewność operacji”), i dopiero potem wołamy ją jeszcze raz.
+- Krok w `pending` dłużej niż 2 minuty uznajemy za przerwany (padła funkcja na Vercelu). Wtedy przed ponowieniem **sprawdzamy w Voucherify**, czy operacja już przeszła (§3, „Operacje na punktach”), i dopiero potem wołamy ją jeszcze raz.
 - `spend` wolno zacząć tylko, dopóki rezerwacja nie ma `payment` (potem punkty są zablokowane, D16). `refund` dotyczy tylko rezerwacji, która ma `spend: done` i nie jest `paid`. `earn` dotyczy tylko `paid`.
 
 Indeksy (`ensureIndexes()` w `src/lib/db.ts`):
@@ -165,7 +166,8 @@ Indeksy (`ensureIndexes()` w `src/lib/db.ts`):
 ```ts
 type LoyaltyMember = {
   _id: string;                   // e-mail po trim + lowercase (D13)
-  memberId: string | null;       // kod karty lojalnościowej w Voucherify; null = sprawdziliśmy, karty nie ma
+  memberId: string | null;       // "lmbr_…" — członek programu w Voucherify; null = sprawdziliśmy, nie ma go
+  cardId: string | null;         // "lcrd_…" — jego karta w portfelu VOUCHERIFY_CARD_DEFINITION_ID
   status: "creating" | "ready" | "absent";
   welcome?: "pending" | "done";  // 1000 punktów powitalnych — dokładnie raz (Z51)
   balance?: number;              // ostatnie znane saldo z Voucherify (pamięć podręczna, D20)
@@ -175,7 +177,7 @@ type LoyaltyMember = {
 };
 ```
 
-- Założenie karty: atomowe przejście `absent`/brak dokumentu → `creating` (wygrywa jeden), potem w Voucherify: szukamy karty klienta (mogła powstać w panelu marketingu — wtedy bez punktów powitalnych), a gdy jej nie ma, tworzymy kartę i dodajemy 1000 punktów. Na końcu `ready`.
+- Założenie karty: atomowe przejście `absent`/brak dokumentu → `creating` (wygrywa jeden), potem w Voucherify: klient (`POST /v1/customers` z `source_id` = e-mail — upsert), członek programu (`POST /v2/loyalties/programs/{programId}/members`); odpowiedź `409 member_already_exists` = członek już jest (np. założony w panelu marketingu) → odczyt członkostwa i **bez** punktów powitalnych. Nowy członek → +1000 (`reason: "welcome-<email>"`, czekamy na `APPROVED`). Na końcu `ready`.
 - `balance` to tylko pamięć podręczna: odświeżana przy każdej naszej operacji (Voucherify zwraca nowe saldo) i najwyżej co 30 s przy odczycie. Do decyzji o wydaniu punktów **zawsze** świeży odczyt z Voucherify.
 - `status: "absent"` sprawdzamy w Voucherify ponownie najwcześniej po 10 minutach.
 
@@ -248,24 +250,40 @@ Stałe i rachunki są w jednym miejscu, `src/lib/points.ts` (lider): `WELCOME_PO
 4. `points > 0` → atomowe zajęcie `loyalty.spend` (`pending`, zapisuje `pointsUsed` i `cardAmount`; warunek: `held`, ważna, bez `payment`, `spend` brak/`retry`/`failed`). Przegrany z tą samą liczbą punktów czeka do 8 s, aż zwycięzca skończy, i dostaje ten sam `url`; z inną → `409 POINTS_LOCKED`,
 5. blokada e-maila w `loyalty_members.spendLockUntil` (15 s); zajęta → `409 LOYALTY_BUSY` „Spróbuj za chwilę” i `spend` wraca na `retry`,
 6. świeże saldo z Voucherify (karta zakładana przy pierwszym użyciu, D14). `saldo < points` → `409 INSUFFICIENT_POINTS`, `spend: failed`, `pointsUsed` i `cardAmount` czyszczone,
-7. pobranie punktów: `points: −pointsUsed`, `reason: "Bilet <reservationId>"`, `source_id: "spend-<reservationId>"` → `spend: done`, zwolnienie blokady,
+7. pobranie punktów: `points: −pointsUsed`, `reason: "spend-<reservationId>"`, **czekamy na `APPROVED`** (§3, „Operacje na punktach”) → `spend: done`; `REJECTED` (portfel nie pozwala zejść poniżej zera) → `409 INSUFFICIENT_POINTS`, `spend: failed`; wciąż `PENDING` po ~4 s → `spend: retry` i `503 LOYALTY_UNAVAILABLE`. Na końcu zwolnienie blokady,
 8. sesja Stripe na `cardAmount`, metadata dodatkowo `pointsUsed`. Opis pozycji: „Wagon 1, miejsce 5 · … · punkty: −10,00 zł”. Błąd Stripe → `503 PAYMENT_UNAVAILABLE`, punkty zostają pobrane (`spend: done`), a ponowne „Zapłać” tworzy sesję bez ponownego pobrania. Jeśli klient nie zapłaci, punkty wracają przy wygaśnięciu (D17).
 
-**Pewność operacji (Voucherify nie ma kluczy idempotencji):** gdy wywołanie zmieniające saldo skończy się timeoutem albo błędem sieci, nie wiemy, czy przeszło. Wtedy odczytujemy kartę i jej ostatnie transakcje (`GET /v1/loyalties/{campaignId}/members/{memberId}/transactions`) i szukamy naszego `source_id`/`reason`. Jest → `done`. Nie ma → `retry` (pobranie punktów: klient dostaje `503 LOYALTY_UNAVAILABLE` i może kliknąć jeszcze raz). Każda operacja ma unikalny `source_id`: `spend-<id>`, `refund-<id>`, `earn-<id>`, `welcome-<email>`.
+**Operacje na punktach (Voucherify v2 nie ma kluczy idempotencji, a zmiany są asynchroniczne):**
+- endpointy (`{p}` = `VOUCHERIFY_PROGRAM_ID`): członkostwo z saldem `GET /v2/loyalties/programs/{p}/memberships/{encodeURIComponent(email)}?identification_type=customer_source_id` (e-mail zawsze kodowany — `+` w `delivered+jan@resend.dev`!; `404` = brak; saldo w `cards[].card.balance.points` karty z naszym portfelem), zmiana punktów `POST /v2/loyalties/programs/{p}/members/{memberId}/cards/{cardId}/points` z `{ points, reason }` → transakcja `lctx_…`, lista transakcji karty `GET …/cards/{cardId}/transactions` (filtry po `id` i `created_at`, `reason` w `details.reason`),
+- **`reason` jest naszym identyfikatorem operacji i jest unikalny:** `spend-<reservationId>`, `refund-<reservationId>`, `earn-<reservationId>`, `welcome-<email>`,
+- **pobranie punktów i punkty powitalne** czekamy do `APPROVED`: odpytujemy transakcję po `id` (np. po 0,5 / 1 / 1,5 s, najwyżej ~4 s). **Dodanie punktów** (zwrot, naliczenie) uznajemy za zrobione, gdy Voucherify przyjął żądanie (`2xx` z `lctx_…`) — dodania portfel nie odrzuca,
+- **przed każdym ponowieniem** (krok `retry` albo `pending` starszy niż 2 min) szukamy na liście transakcji karty naszego `reason` z ostatnich 24 h. Jest `APPROVED`/`PENDING`/`PROCESSING` → operacja już poszła, nie wysyłamy drugi raz (dla pobrania czekamy na wynik). Jest `REJECTED` albo brak → wysyłamy ponownie,
+- timeout albo zerwane połączenie przy `POST` = nie wiadomo, czy doszło → od razu takie samo sprawdzenie po `reason`. Pobranie punktów bez pewności → `spend: retry` i `503 LOYALTY_UNAVAILABLE` (klient klika jeszcze raz, a sprawdzenie po `reason` nie pozwoli pobrać dwa razy).
 
 **Zwrot punktów — `settleLoyalty` (D17, karta A):**
 - dotyczy rezerwacji z `loyalty.spend.status: "done"`, która nie jest `paid` i jest zamknięta (`active: false`) albo minęło 30 s od `expiresAt` (D8 przyjmuje płatność do 10 s po czasie — 30 s to zapas),
 - jedno atomowe `findOneAndUpdate` ustawia `status: "expired"`, `active: false` i `loyalty.refund: pending`. Od tej chwili `acceptPayment` jej nie opłaci (warunek `held` + `active`), a spóźniona płatność dostaje zwrot pieniędzy jak w Etapie II,
-- potem `+pointsUsed` na kartę (`source_id: "refund-<id>"`) → `refund: done`,
+- potem `+pointsUsed` na kartę (`reason: "refund-<id>"`) → `refund: done`,
 - wołają ją: `GET /api/reservations/:id` (ta rezerwacja), `GET /api/loyalty` i `GET /api/reservations/:id/points` (wszystkie rezerwacje tego e-maila, **przed** odczytem salda — klient od razu widzi oddane punkty), webhook po zwrocie pieniędzy za spóźnioną płatność, `/api/cron/settle` (wszystkie zaległe). Wywołanie Voucherify przez `after()`, z wyjątkiem odczytu salda, który czeka na zwrot, żeby pokazać właściwą liczbę.
 
-**Punkty za zakup — `earnForPurchase` (D18, karta A):** `acceptPayment` w tym samym atomowym przejściu do `paid` zapisuje `pointsEarned` i `loyalty.earn: pending`. Po odpowiedzi (`after()`) `+pointsEarned` na kartę (`source_id: "earn-<id>"`), karta zakładana przy pierwszym użyciu z 1000 powitalnymi. Błąd → `retry`; ponawia `GET /api/reservations/:id`, `GET /api/loyalty` tego e-maila i cron. `pointsEarned` w API jest od razu po opłaceniu, niezależnie od tego, czy Voucherify już je zapisał.
+**Punkty za zakup — `earnForPurchase` (D18, karta A):** `acceptPayment` w tym samym atomowym przejściu do `paid` zapisuje `pointsEarned` i `loyalty.earn: pending`. Po odpowiedzi (`after()`) `+pointsEarned` na kartę (`reason: "earn-<id>"`), karta zakładana przy pierwszym użyciu z 1000 powitalnymi. Błąd → `retry`; ponawia `GET /api/reservations/:id`, `GET /api/loyalty` tego e-maila i cron. `pointsEarned` w API jest od razu po opłaceniu, niezależnie od tego, czy Voucherify już je zapisał.
 
 **Mail z biletem — `sendTicketEmail` (D19, karta C):** po przyjęciu płatności (webhook i synchronizacja w GET) przez `after()`. Atomowe zajęcie `ticketEmail` (brak/`retry` → `sending`), potem Resend z `Idempotency-Key: ticket-<reservationId>`. Sukces → `sent` + `resendId`. `429`/`5xx`/sieć → `retry` (ponawia GET rezerwacji i cron, najwyżej 5 prób). `4xx` (np. `403` dla adresu spoza testowych) → `failed`, bez ponawiania. Treść: kod biletu, kurs, odjazd (Europe/Warsaw), wagon i miejsce, pasażer, „Zapłacono kartą: 79,00 zł”, „Zapłacono punktami: 1000 pkt (10,00 zł)”, „Zebrane punkty: 790”, link `APP_URL/reservations/<kod>`. Wszystkie dane klienta w HTML przez escape (Z48). Wersja `text` obok `html`.
 
 **`GET /api/loyalty`:** limit ruchu (kubełek `loyalty`, D7), walidacja e-maila jak w rezerwacji (`400`), normalizacja D13, `settleLoyalty` dla tego e-maila, potem saldo: karta `ready` → Voucherify (albo pamięć podręczna, jeśli młodsza niż 30 s); `absent` sprawdzone w ciągu 10 min → 1000 bez wołania Voucherify; brak wpisu → jedno wyszukanie karty klienta w Voucherify. Odpowiedź zawiera tylko `email` i `points`.
 
-**Budżet wywołań Voucherify (100/h w sandboxie):** saldo nowego e-maila: 1 wywołanie (potem 10 min z pamięci). Kupno bez punktów: 0 przy kliknięciu + 3 przy naliczeniu dla nowego klienta (szukaj, załóż, +1000 i +punkty → 4) albo 1 dla znanego. Kupno z punktami: 2–5. Wszystkie odczyty salda w ciągu 30 s z pamięci. `429` od Voucherify traktujemy jak niedostępność (D20) i zapisujemy `Retry-After` z odpowiedzi; do tej chwili nie wołamy Voucherify wcale (pamiętane w procesie i w `loyalty_members` pod `_id: "__rate_limit__"`).
+**Budżet wywołań Voucherify (100/h na projekt w sandboxie):**
+
+| Sytuacja | Wywołania |
+|---|---|
+| saldo nowego e-maila (`GET /api/loyalty`) | 1, potem 10 min z pamięci |
+| saldo znanego klienta | 1, potem 30 s z pamięci |
+| zakup bez punktów — nowy klient | 0 przy „Zapłać”; po zapłacie ~5 (klient, członek, +1000, sprawdzenie +1000, +punkty) |
+| zakup bez punktów — znany klient | 0 przy „Zapłać”; po zapłacie 1 |
+| zakup z punktami — nowy klient | ~9 (saldo, klient, członek, +1000 i sprawdzenie, pobranie i 1–2 sprawdzenia, +punkty) |
+| zakup z punktami — znany klient | ~4–5 |
+
+Czyli kilkanaście zakupów na godzinę na cały zespół i CEO — dlatego lokalnie `memory`, a atak na produkcji ma budżet wywołań. `429` od Voucherify traktujemy jak niedostępność (D20) i zapisujemy czas z `Retry-After` / `X-Rate-Limit-Retry`; do tej chwili nie wołamy Voucherify wcale (pamiętane w procesie i w `loyalty_members` pod `_id: "__rate_limit__"`).
 
 **Limit ruchu [E3]:** kubełki `reservations`, `checkout` jak w Etapie II, nowy `loyalty` dla `GET /api/loyalty` i `GET /api/reservations/:id/points` (40 / 10 s / IP). Cron i webhook bez limitu.
 
@@ -322,8 +340,8 @@ Funkcje współdzielone (sygnatur nie zmieniamy; szkielet daje zaślepki):
 - **[E3]** `saveCheckoutSession(id, { sessionId, url, pointsUsed, cardAmount }): Promise<void>` — Eryk; zapisuje `payment` (i dla `pointsUsed: 0` także `pointsUsed`/`cardAmount`) tylko gdy rezerwacja jest `held`, nie ma sesji, a przy `pointsUsed > 0` ma `loyalty.spend.status: "done"` z tą samą liczbą punktów. Woła Kamil.
 - **[E3]** `claimPointsSpend(id, points): Promise<{ ok: true; reservation: Reservation } | { ok: false; error: "RESERVATION_NOT_FOUND" | "RESERVATION_EXPIRED" | "ALREADY_PAID" | "POINTS_LOCKED" | "SPEND_IN_PROGRESS"; pointsUsed?: number }>` — Eryk (`reservations.ts`); atomowe zajęcie `loyalty.spend` z §3 krok 4. Woła Kamil.
 - **[E3]** `finishPointsSpend(id, status: "done" | "retry" | "failed"): Promise<void>` — Eryk; `failed`/`retry` czyści `pointsUsed` i `cardAmount`. Woła Kamil.
-- **[E3]** `src/lib/voucherify.ts` (Eryk): `getLoyaltyClient(): LoyaltyClient` — `findMember(email)`, `createMember(email)`, `getBalance(memberId)`, `adjustBalance(memberId, points, { reason, sourceId })` → `{ balance }`, `hasTransaction(memberId, sourceId)`. Błędy: `LoyaltyUnavailableError { retryAfterSeconds?: number; uncertain: boolean }` (`uncertain` = żądanie mogło dojść: timeout, zerwane połączenie). Implementacje `voucherify` i `memory` (D21).
-- **[E3]** `src/lib/loyalty.ts` (Eryk): `normalizeEmail(email): string`, `getPoints(email): Promise<number>` (z `settleLoyalty` i pamięcią podręczną), `getFreshBalance(email): Promise<number>` (zawsze z Voucherify, 1000 dla e-maila bez karty), `ensureMember(email): Promise<string>` (memberId; zakłada kartę i dodaje 1000 raz), `applyPoints(email, points, sourceId, reason): Promise<"done" | "retry">` (z „Pewnością operacji”), `acquireSpendLock(email): Promise<boolean>`, `releaseSpendLock(email): Promise<void>`, `settleLoyalty(target: { reservationId: string } | { email: string }): Promise<void>`, `earnForPurchase(reservationId): Promise<void>`, `runLoyaltyRetries(): Promise<{ refunded: number; earned: number }>`. Woła Kamil (`spend.ts`, `points` route) i lider (cron w szkielecie).
+- **[E3]** `src/lib/voucherify.ts` (Eryk): `getLoyaltyClient(): LoyaltyClient` — `findMember(email)` → `{ memberId, cardId, balance } | null`, `createMember(email)` → `{ memberId, cardId, created }` (upsert klienta + członek; `409` → istniejący, `created: false`), `addPoints(memberId, cardId, points, reason)` → `{ transactionId }` (ujemne = pobranie), `getTransaction(memberId, cardId, transactionId)` → `{ status }`, `findTransactionByReason(memberId, cardId, reason, since)` → `{ transactionId, status, points } | null`. Błędy: `LoyaltyUnavailableError { retryAfterSeconds?: number; uncertain: boolean }` (`uncertain` = żądanie mogło dojść: timeout, zerwane połączenie). Implementacje `voucherify` i `memory` (D21).
+- **[E3]** `src/lib/loyalty.ts` (Eryk): `normalizeEmail(email): string`, `getPoints(email): Promise<number>` (z `settleLoyalty` i pamięcią podręczną), `getFreshBalance(email): Promise<number>` (zawsze z Voucherify, 1000 dla e-maila bez karty), `ensureMember(email): Promise<{ memberId: string; cardId: string }>` (zakłada członka i dodaje 1000 raz, czeka na `APPROVED` powitalnych), `applyPoints(email, points, reason, { waitForApproval }): Promise<"done" | "rejected" | "retry">` (zakłada kartę przez `ensureMember`, zasady z „Operacji na punktach”; `waitForApproval: true` dla pobrania), `acquireSpendLock(email): Promise<boolean>`, `releaseSpendLock(email): Promise<void>`, `settleLoyalty(target: { reservationId: string } | { email: string }): Promise<void>`, `earnForPurchase(reservationId): Promise<void>`, `runLoyaltyRetries(): Promise<{ refunded: number; earned: number }>`. Woła Kamil (`spend.ts`, `points` route) i lider (cron w szkielecie).
 - **[E3]** `src/lib/spend.ts` (Kamil): `spendPointsForCheckout(reservationId, points): Promise<SpendResult>` — kroki 4–7 z §3. Woła `checkout.ts`.
 - **[E3]** `src/lib/mail.ts` (Mateusz): `sendTicketEmail(reservationId): Promise<void>` (nigdy nie rzuca), `retryTicketEmails(): Promise<number>`. Woła Eryk (`payments.ts`, `reservations.ts`, cron).
 - **[E3]** `src/lib/payments.ts` (Eryk): po każdym przyjęciu płatności `runAfterResponse("payments:after", () => Promise.allSettled([earnForPurchase(id), sendTicketEmail(id)]))`.
@@ -378,17 +396,18 @@ Punkty i maile to dwie nowe zewnętrzne usługi, tak jak Stripe. Kryteria Etapu 
 | **Z38** | Podwójne „Zapłać” z punktami (C1) pobiera punkty dwa razy | atomowe zajęcie `loyalty.spend`; przegrany czeka i dostaje ten sam `url` | Kamil + Eryk |
 | **Z39** | Punkty pobrane, a klient nie zapłacił (rezerwacja wygasła) | `settleLoyalty` oddaje punkty (D17): przy odczycie rezerwacji, przy odczycie salda, codzienny cron | Eryk |
 | **Z40** | Płatność kartą po wygaśnięciu rezerwacji z punktami (II.A2) | zwrot pieniędzy (D8) i zwrot punktów; zwrot punktów zamyka rezerwację atomowo, więc nie ma „biletu za darmo” | Eryk |
-| **Z41** | Punkty za zakup naliczone dwa razy (powtórka webhooka, webhook + GET, ponowienie) | `pointsEarned` + `loyalty.earn: pending` w tym samym przejściu do `paid`; jeden wykonawca; `source_id` + sprawdzenie transakcji przed ponowieniem | Eryk |
+| **Z41** | Punkty za zakup naliczone dwa razy (powtórka webhooka, webhook + GET, ponowienie) | `pointsEarned` + `loyalty.earn: pending` w tym samym przejściu do `paid`; jeden wykonawca; unikalny `reason` + sprawdzenie transakcji przed ponowieniem | Eryk |
 | **Z42** | Punkty liczone od całej ceny, od groszy albo zaokrąglone w górę | jeden wzór `pointsEarnedFor(cardAmount)` w `points.ts`; test na 7900 → 790, 4450 → 440, 99 → 0 | wszyscy |
 | **Z43** | Voucherify nie działa albo limit 100/h (`429`) | bez punktów płacisz jak w Etapie II (zero wywołań Voucherify); z punktami `503 LOYALTY_UNAVAILABLE`; saldo z pamięci podręcznej; naliczenia i zwroty czekają na ponowienie (D20) | Eryk + Kamil |
-| **Z44** | Timeout przy zmianie salda — nie wiadomo, czy punkty zeszły | sprawdzenie transakcji po `source_id` przed decyzją; nigdy sesja Stripe ze zniżką bez `spend: done` | Eryk + Kamil |
+| **Z44** | Timeout przy zmianie salda — nie wiadomo, czy punkty zeszły | sprawdzenie transakcji po `reason` przed decyzją; pobranie liczy się dopiero po `APPROVED`; nigdy sesja Stripe ze zniżką bez `spend: done` | Eryk + Kamil |
 | **Z45** | Klient zmienia liczbę punktów po otwarciu strony Stripe i płaci starą sesją | punkty zablokowane po pierwszym „Zapłać” → `409 POINTS_LOCKED` (D16); webhook sprawdza `amount_total === cardAmount` | Kamil + Eryk |
 | **Z46** | Mail z biletem wysłany dwa razy (webhook + GET, powtórka) | atomowe zajęcie `ticketEmail` + `Idempotency-Key: ticket-<id>` w Resend (24 h) | Mateusz |
 | **Z47** | Mail nie wychodzi (Resend nie działa, `bounced@`, adres spoza testowych `403`) | bilet i odpowiedzi API bez zmian; `ticketEmail: retry/failed`, ponowienie do 5 razy; strona biletu działa bez maila | Mateusz |
 | **Z48** | HTML/link w imieniu wstrzyknięty do maila | escape wszystkich danych klienta w HTML, link do biletu z `APP_URL` | Mateusz |
 | **Z49** | Ktoś sprawdza saldo cudzego e-maila (`GET /api/loyalty`) | świadomie dozwolone przez PDF; odpowiedź tylko `{ email, points }`, limit ruchu; ujawnia mniej niż mail od marketingu | Eryk |
 | **Z50** | Klucze Voucherify/Resend w repo, w przeglądarce albo w odpowiedzi błędu | tylko env serwera, bez `NEXT_PUBLIC_`; treść błędów usług tylko w `console.error` | wszyscy |
-| **Z51** | 1000 punktów powitalnych dodane dwa razy (dwa pierwsze zakupy naraz) | atomowe `creating` w `loyalty_members`, `welcome: pending → done`, `source_id: "welcome-<email>"` | Eryk |
+| **Z51** | 1000 punktów powitalnych dodane dwa razy (dwa pierwsze zakupy naraz) | atomowe `creating` w `loyalty_members`, `welcome: pending → done`, `reason: "welcome-<email>"` sprawdzany przed ponowieniem; `409 member_already_exists` = bez powitalnych | Eryk |
 | **Z52** | `Jan@Example.com` i `jan@example.com` jako dwa konta | normalizacja D13 wszędzie: rezerwacja, saldo, Voucherify | Eryk |
 | **Z53** | Kwota z body checkoutu (`{ "amount": 100 }`, II.A1) | body: liczy się tylko `points` (D22); kwota z bazy | Kamil |
 | **Z54** | Zostawione punkty lub maile po awarii funkcji na Vercelu w połowie operacji | kroki `pending` starsze niż 2 min ponawia GET i dzienny cron (`/api/cron/settle`), po sprawdzeniu transakcji | Eryk + Mateusz |
+| **Z55** | Voucherify przyjął pobranie punktów, ale je odrzucił albo jeszcze przetwarza (v2 jest asynchroniczne) | sesja Stripe dopiero po `APPROVED`; `REJECTED` → `409 INSUFFICIENT_POINTS`; dalej `PENDING` → `503` i sprawdzenie po `reason` przy następnym kliknięciu | Kamil + Eryk |

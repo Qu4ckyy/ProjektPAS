@@ -285,7 +285,7 @@ describe("POST /checkout z punktami (D15, D16)", () => {
     expect(res.body).toEqual({ url: "https://checkout.stripe.com/c/pay/cs_test_1", pointsUsed: 1000, cardAmount: 7900 });
     expect(create).toHaveBeenCalledTimes(1);
     const [params, options] = create.mock.calls[0];
-    expect(options).toEqual({ idempotencyKey: `checkout-${id}` });
+    expect(options).toEqual({ idempotencyKey: `checkout-${id}-p1000` });
     expect(params.line_items?.[0].price_data).toMatchObject({ currency: "pln", unit_amount: 7900 });
     expect(params.line_items?.[0].price_data?.product_data?.description).toMatch(
       /^Wagon \d, miejsce \d+ · .+, odjazd \d\d:\d\d · punkty: −10,00\s?zł$/u,
@@ -328,7 +328,7 @@ describe("POST /checkout z punktami (D15, D16)", () => {
     for (const r of results) expect(r.body).toMatchObject({ pointsUsed: 1000, cardAmount: 7900 });
     expect(spendCalls(spies)).toBe(1);
     expect(await memoryBalance(email)).toBe(2000);
-    for (const [, options] of create.mock.calls) expect(options).toEqual({ idempotencyKey: `checkout-${id}` });
+    for (const [, options] of create.mock.calls) expect(options).toEqual({ idempotencyKey: `checkout-${id}-p1000` });
     expect((await findReservation(id))?.payment?.url).toBe(results[0].body.url);
   });
 
@@ -636,6 +636,11 @@ describe("POST /checkout z punktami (D15, D16)", () => {
     for (const r of results.filter((x) => x.status !== 200)) {
       expect(["POINTS_LOCKED", "PAYMENT_UNAVAILABLE"]).toContain(r.body.error);
     }
+    // Osobny klucz Stripe dla sesji z punktami: rezerwacji nic nie blokuje — kolejne „Zapłać”
+    // z ustalonymi punktami zawsze dostaje sesję (wcześniej konflikt klucza dawał 503 na 24 h).
+    const again = await apiCheckout(id, { points: doc?.pointsUsed ?? 0 });
+    expect(again.status, again.text).toBe(200);
+    expect(again.body).toMatchObject({ pointsUsed: doc?.pointsUsed, cardAmount: doc?.cardAmount });
   });
 });
 
