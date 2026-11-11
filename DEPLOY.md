@@ -104,6 +104,8 @@ Wynik lokalny Etapu II (TTL 20 s, prawdziwy klucz testowy Stripe): **55/55 PASS*
 
 Wynik lokalny Etapu III (11 listopada 2026, TTL 20 s, `LOYALTY_PROVIDER=memory`, `MAIL_PROVIDER=log`, prawdziwy klucz testowy Stripe): **84/84 PASS** z `--slow --webhook-secret`. Dochodzą: saldo nowego klienta 1000 i tylko `{ email, points }` (Z49, Z52), złe `points` → 400 (Z37), ponad połowę ceny → `POINTS_OVER_LIMIT`, ponad saldo → `INSUFFICIENT_POINTS` (Z36), 5× „Zapłać” z 1000 pkt → jeden url i jedno pobranie (Z38), `POINTS_LOCKED` (Z45), `{ amount: 100 }` ignorowane (Z53), płatność 79 zł → `pointsEarned` 790 i powtórka bez drugiego naliczenia (D18, Z41), nieopłacona rezerwacja z 500 pkt → punkty wracają, a „Zapłać” daje 410 (Z39, Z40). Mail z biletem w logu dokładnie raz.
 
+Wynik na produkcji Etapu III (11 listopada 2026, prawdziwy Voucherify sandbox i Resend, TTL 120 s): **67/67 PASS** szybki przebieg (~10 wywołań Voucherify) i **71/71 PASS** z `--slow --skip-b5` (~19 wywołań): A2 1,0 s, B4 1,2 s, C2 5× jeden właściciel, C4 410, zwrot 500 pkt po wygaśnięciu (Z39) i 410 po zwrocie (Z40). Naliczenie punktów po płatności i mail — ręcznie, §6a.
+
 Wynik na produkcji (3 listopada 2026, `68136cf`): **43/43 PASS** szybki przebieg (B5: podrobione nagłówki IP dostają 429 — Vercel nadpisuje je sam) i **45/45 PASS** z `--slow --skip-b5` (A2 1,7 s, B4 1,9 s, C2 5× jeden właściciel, C4 410). Uwaga: przebieg `--slow` czekał 897 s, czyli produkcja miała wtedy TTL 900, a nie 120 — sprawdź `RESERVATION_TTL_SECONDS` przed testem CEO.
 
 ## 6. Test kart (ręcznie, na produkcji, po skonfigurowaniu webhooka)
