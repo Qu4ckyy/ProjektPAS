@@ -1,10 +1,11 @@
-// Atak na API wg kryteriów CEO (PAS Kryteria A1–C4) i zagrożeń CONTRACT.md §7 — Etap II (Stripe).
-// Użycie: node scripts/attack.mjs [BASE_URL] [--slow] [--webhook-secret whsec_...] [--skip-b5]
+// Atak na API wg kryteriów CEO (etapy I i II) i zagrożeń CONTRACT.md §7 — Etap III (punkty Voucherify, mail Resend).
+// Użycie: node scripts/attack.mjs [BASE_URL] [--slow] [--webhook-secret whsec_...] [--skip-b5] [--skip-loyalty]
 //   BASE_URL          domyślnie http://localhost:3000
 //   --slow            dodatkowo A2, B4, C2, C4: czeka, aż rezerwacje wygasną (TTL serwera + ok. 20 s)
 //   --webhook-secret  TYLKO lokalnie: podpisuje własne zdarzenia Stripe tym sekretem (jak `stripe listen`)
 //                     i sprawdza przyjęcie płatności, powtórki, złą kwotę, C2 i C4 na płatnościach
 //   --skip-b5         bez zalewania API (B5) — zużywa do 40 miejsc na czas TTL
+//   --skip-loyalty    bez scenariuszy punktów — zero wywołań Voucherify (sandbox: 100 na godzinę na projekt)
 // Czysty Node 20+, bez zależności. Exit code 1, jeśli cokolwiek padło.
 import { createHmac } from "node:crypto";
 
@@ -19,6 +20,7 @@ const positional = args.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.has
 const BASE = (positional[0] ?? "http://localhost:3000").replace(/\/$/, "");
 const SLOW = flag("--slow");
 const SKIP_B5 = flag("--skip-b5");
+const SKIP_LOYALTY = flag("--skip-loyalty");
 const WEBHOOK_SECRET = option("--webhook-secret");
 const IS_LOCAL = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(BASE);
 
@@ -30,6 +32,10 @@ if (WEBHOOK_SECRET && !IS_LOCAL) {
 const CODE_REGEX = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
 const LEAK_PATTERNS = [/\bat [\w.<>]+ \(/, /Error:/, /Mongo/i, /\/Users\//, /node_modules/, /\.tsx?:\d+/, /sk_(test|live)_/, /whsec_/];
 const EVENT_FIELDS = ["_id", "title", "startsAt", "seats", "price", "trainNumber", "from", "to", "arrivesAt", "wagons"];
+
+/** Szacunek wywołań Voucherify, które wywołał atak (CONTRACT.md §3 „Budżet wywołań”). */
+let voucherifyCalls = 0;
+const VOUCHERIFY_BUDGET = 25;
 
 // --- Wyniki ---
 
@@ -115,6 +121,25 @@ const client = (label = "Atak") => {
   clientCounter++;
   return { customerName: `${label} ${clientCounter}`, email: `atak-${RUN}-${clientCounter}@example.com` };
 };
+
+/** Klient punktów: testowy adres Resend (mail z biletem dojdzie), nowy w każdym przebiegu — nowe konto z 1000 pkt. */
+const loyaltyClient = (label = "Punkty") => {
+  clientCounter++;
+  return { customerName: `${label} ${clientCounter}`, email: `delivered+atk-${RUN}-${clientCounter}@resend.dev` };
+};
+const loyalty = (email) => get(`/api/loyalty?email=${encodeURIComponent(email)}`);
+const checkoutPoints = (id, body, opts = {}) => checkout(id, { json: body, ...opts });
+
+/** after() na serwerze nalicza punkty po odpowiedzi — odpytujemy saldo, aż dojdzie do oczekiwanego (≤ 10 s). */
+async function waitForPoints(email, expected) {
+  let last;
+  for (let i = 0; i < 10; i++) {
+    last = await loyalty(email);
+    if (last.body?.points === expected) return last;
+    await sleep(1000);
+  }
+  return last;
+}
 
 /** Kursy z wolnymi miejscami; miejsca wydajemy losowo i każde tylko raz. */
 async function loadEvents() {
@@ -352,6 +377,122 @@ async function main() {
     note("bez --webhook-secret: przyjęcie płatności, powtórki i zła kwota nie są sprawdzane (lokalnie dodaj sekret, na produkcji zapłać kartą 4242 ręcznie).");
   }
 
+  let refundCase = null;
+  if (!SKIP_LOYALTY) {
+    section("Punkty — karta A (saldo)");
+    const noEmail = await get("/api/loyalty");
+    check("Z37", "GET /api/loyalty bez e-maila → 400", noEmail.status === 400 && isApiError(noEmail, "VALIDATION_ERROR"), `${noEmail.status}`);
+    const badEmail = await loyalty("to-nie-email");
+    check("Z37", "GET /api/loyalty ze złym e-mailem → 400", badEmail.status === 400 && isApiError(badEmail, "VALIDATION_ERROR"), `${badEmail.status}`);
+    const injected = await get("/api/loyalty?email[$ne]=x");
+    check("Z6", "GET /api/loyalty z email[$ne] → 400, nigdy 5xx", injected.status === 400, `${injected.status}`);
+
+    const p = loyaltyClient("Punkty");
+    const fresh = await loyalty(p.email);
+    voucherifyCalls += 1; // jedno wyszukanie karty, potem 10 min z pamięci
+    if (fresh.status === 503) note("GET /api/loyalty → 503 LOYALTY_UNAVAILABLE: Voucherify nie działa albo brak kluczy na serwerze.");
+    check(
+      "A",
+      "nowy e-mail → 200 { email, points: 1000 }, nic więcej (Z49)",
+      fresh.status === 200 && fresh.body?.points === 1000 && Object.keys(fresh.body ?? {}).sort().join() === "email,points",
+      `${fresh.status} ${fresh.text.slice(0, 80)}`,
+    );
+    const upper = await loyalty(p.email.toUpperCase());
+    check("Z52", "ten sam e-mail wielkimi literami → ten sam klient (e-mail małymi literami)", upper.status === 200 && upper.body?.email === p.email && upper.body?.points === 1000, `${upper.body?.email}`);
+
+    section("Punkty — karta B (płatność punktami)");
+    const maxPoints = Math.floor(E.price / 2);
+    const pRes = await reserve({ eventId: E._id, seatId: seatFrom(main), ...p });
+    const pId = pRes.body?.reservationId;
+    const before = await get(`/api/reservations/${pId}`);
+    check(
+      "API",
+      "GET rezerwacji przed „Zapłać” → pointsUsed 0, cardAmount = amount, pointsEarned null",
+      before.body?.pointsUsed === 0 && before.body?.cardAmount === E.price && before.body?.pointsEarned === null,
+    );
+    const hint = await get(`/api/reservations/${pId}/points`);
+    check(
+      "B",
+      `podpowiedź → balance 1000, maxPoints 1000, locked false, bez e-maila`,
+      hint.status === 200 && hint.body?.balance === 1000 && hint.body?.maxPoints === Math.min(1000, maxPoints) && hint.body?.locked === false && !hint.text.includes("@"),
+      `${hint.status} ${hint.text.slice(0, 80)}`,
+    );
+    for (const [label, body] of [
+      ['"100" (tekst)', { points: "100" }],
+      ["1.5", { points: 1.5 }],
+      ["-1", { points: -1 }],
+      ["null", { points: null }],
+      ["{}", { points: {} }],
+      ["1e300", { points: 1e300 }],
+    ]) {
+      const r = await checkoutPoints(pId, body);
+      check("Z37", `checkout z points ${label} → 400 VALIDATION_ERROR`, r.status === 400 && isApiError(r, "VALIDATION_ERROR"), `${r.status}`);
+    }
+    const notJson = await checkout(pId, { json: undefined, raw: "{points:", headers: { "content-type": "application/json" } });
+    check("Z37", "checkout z zepsutym JSON → 400", notJson.status === 400, `${notJson.status}`);
+    const over = await checkoutPoints(pId, { points: maxPoints + 1 });
+    check("Z37", `points ponad połowę ceny (${maxPoints + 1}) → 400 POINTS_OVER_LIMIT z maxPoints ${maxPoints}`, over.status === 400 && isApiError(over, "POINTS_OVER_LIMIT") && over.body?.maxPoints === maxPoints, `${over.status}`);
+    if (maxPoints > 1000) {
+      const tooMany = await checkoutPoints(pId, { points: 1001 });
+      voucherifyCalls += 1; // świeże saldo przed pobraniem
+      check("Z36", "więcej punktów niż saldo (1001 przy 1000) → 409 INSUFFICIENT_POINTS z balance", tooMany.status === 409 && isApiError(tooMany, "INSUFFICIENT_POINTS") && tooMany.body?.balance === 1000, `${tooMany.status} ${tooMany.body?.error}`);
+    }
+    check("Z43", "odmowy punktowe nie zakładają sesji płatności", (await get(`/api/reservations/${pId}`)).body?.pointsUsed === 0);
+
+    const par = await Promise.all(Array.from({ length: 5 }, () => checkoutPoints(pId, { points: 1000 })));
+    voucherifyCalls += 7; // klient, członek, +1000 i sprawdzenie, świeże saldo, pobranie i sprawdzenie
+    const cardAmount = E.price - 1000;
+    check(
+      "Z38",
+      "„Zapłać” z 1000 pkt 5× równolegle → 200, jeden url, pointsUsed 1000, cardAmount = cena − 1000",
+      par.every((r) => r.status === 200 && r.body?.pointsUsed === 1000 && r.body?.cardAmount === cardAmount) && new Set(par.map((r) => r.body?.url)).size === 1,
+      par.map((r) => `${r.status}${r.body?.error ? ` ${r.body.error}` : ""}`).join(", "),
+    );
+    const locked = await checkoutPoints(pId, { points: 500 });
+    check("Z45", "inna liczba punktów po pierwszym „Zapłać” → 409 POINTS_LOCKED z pointsUsed 1000", locked.status === 409 && isApiError(locked, "POINTS_LOCKED") && locked.body?.pointsUsed === 1000, `${locked.status}`);
+    const again = await checkout(pId);
+    check("D16", "„Zapłać ponownie” bez points → ten sam url", again.status === 200 && again.body?.url === par[0].body?.url);
+    const afterPay = await get(`/api/reservations/${pId}`);
+    check("API", "GET rezerwacji → pointsUsed 1000, cardAmount, pointsEarned null", afterPay.body?.pointsUsed === 1000 && afterPay.body?.cardAmount === cardAmount && afterPay.body?.pointsEarned === null);
+    const hintLocked = await get(`/api/reservations/${pId}/points`);
+    check("D16", "podpowiedź po „Zapłać” → locked true, maxPoints = pointsUsed", hintLocked.body?.locked === true && hintLocked.body?.maxPoints === 1000 && hintLocked.body?.pointsUsed === 1000);
+    const spentBalance = await loyalty(p.email);
+    voucherifyCalls += 1;
+    check("Z38", "saldo po pobraniu → 0 (punkty zeszły dokładnie raz)", spentBalance.body?.points === 0, `${spentBalance.body?.points}`);
+
+    // II.A1 na Etapie III: kwota z body ignorowana także obok punktów.
+    const a1Res = await reserve({ eventId: E._id, seatId: seatFrom(main), ...client("IIA1") });
+    const a1 = await checkoutPoints(a1Res.body?.reservationId, { amount: 100 });
+    check("Z53", "checkout z { amount: 100 } → sesja na pełną kwotę z bazy (II.A1)", a1.status === 200 && a1.body?.cardAmount === E.price && a1.body?.pointsUsed === 0, `${a1.status} ${a1.body?.cardAmount}`);
+
+    if (WEBHOOK_SECRET) {
+      const pay = signedEvent(pId, { amount: cardAmount });
+      const w1 = await sendWebhook(pay);
+      const earned = Math.floor(cardAmount / 100) * 10;
+      const paid = await get(`/api/reservations/${pId}`);
+      check("D18", `płatność ${cardAmount / 100} zł kartą → paid, pointsEarned ${earned}`, w1.status === 200 && paid.body?.status === "paid" && paid.body?.pointsEarned === earned, `${paid.body?.status} ${paid.body?.pointsEarned}`);
+      const w2 = await sendWebhook(pay);
+      const balance = await waitForPoints(p.email, earned);
+      voucherifyCalls += 2; // naliczenie + odczyt salda
+      check("Z41", `powtórzony webhook → 200, saldo ${earned} (punkty naliczone raz)`, w2.status === 200 && balance.body?.points === earned, `${balance.body?.points}`);
+      const ticket = await get(`/api/tickets/${paid.body?.code}`);
+      check("C", "bilet → pointsUsed 1000, cardAmount, pointsEarned", ticket.body?.pointsUsed === 1000 && ticket.body?.cardAmount === cardAmount && ticket.body?.pointsEarned === earned);
+      note("mail z biletem: przy MAIL_PROVIDER=log sprawdź w logu serwera, że jest dokładnie jeden „[mail] (log)” dla " + p.email);
+    } else {
+      note("bez --webhook-secret: naliczenie punktów po płatności nie jest sprawdzane (na produkcji: zapłać kartą 4242 i sprawdź saldo).");
+    }
+
+    if (SLOW) {
+      // Z39: punkty pobrane, a klient nie płaci — po wygaśnięciu wracają. Rezerwację zakładamy teraz, sprawdzamy w --slow.
+      const r = loyaltyClient("Zwrot");
+      const rRes = await reserve({ eventId: E._id, seatId: seatFrom(main), ...r });
+      const spent = await checkoutPoints(rRes.body?.reservationId, { points: 500 });
+      voucherifyCalls += 7;
+      if (spent.status === 200) refundCase = { email: r.email, id: rRes.body?.reservationId };
+      else check("Z39", "przygotowanie zwrotu: „Zapłać” z 500 pkt → 200", false, `${spent.status} ${spent.body?.error}`);
+    }
+  }
+
   if (SLOW) {
     section("--slow: wygasanie (A2, B4, C4) i wyścig w chwili wygaśnięcia (C2)");
     const slowPool = pools.find((p) => p !== main && p.free.length >= 8) ?? main;
@@ -415,6 +556,22 @@ async function main() {
     check("C4", "checkout po upływie czasu → 410 RESERVATION_EXPIRED", late.status === 410 && isApiError(late, "RESERVATION_EXPIRED"), `${late.status}`);
     if (paidId) {
       check("C4", "opłacona rezerwacja po czasie dalej paid (miejsce zajęte)", (await get(`/api/reservations/${paidId}`)).body?.status === "paid");
+    }
+
+    if (refundCase) {
+      // D17: zwrot punktów rusza 30 s po expiresAt (zapas na płatność w ostatniej chwili, D8).
+      const rExp = Date.parse((await get(`/api/reservations/${refundCase.id}`)).body?.expiresAt ?? "");
+      const wait = rExp + 31_000 - (Date.now() + offset);
+      if (wait > 0) {
+        console.log(`      … czekam ${Math.round(wait / 1000)} s na zwrot punktów (30 s po wygaśnięciu)`);
+        await sleep(wait);
+      }
+      const expired = await get(`/api/reservations/${refundCase.id}`);
+      const back = await waitForPoints(refundCase.email, 1000);
+      voucherifyCalls += 2;
+      check("Z39", "nieopłacona rezerwacja z 500 pkt wygasła → punkty wróciły (saldo 1000)", expired.body?.status === "expired" && back.body?.points === 1000, `${expired.body?.status} ${back.body?.points}`);
+      const late = await checkout(refundCase.id);
+      check("Z40", "po zwrocie punktów „Zapłać” → 410 (bez biletu za darmo)", late.status === 410, `${late.status}`);
     }
   }
 
@@ -490,6 +647,9 @@ try {
 }
 
 if (rateLimitWaits) note(`${rateLimitWaits}× czekałem na Retry-After (limit 40 / 10 s działa także na moje scenariusze).`);
+if (!SKIP_LOYALTY) {
+  note(`szacowane wywołania Voucherify: ~${voucherifyCalls} (budżet ataku ${VOUCHERIFY_BUDGET}, limit sandboxa 100 na godzinę na projekt).`);
+}
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} PASS${failed.length ? `, ${failed.length} FAIL:` : ""}`);
 for (const f of failed) console.log(`  ✗ ${f.id} ${f.name}${f.detail ? ` — ${f.detail}` : ""}`);
