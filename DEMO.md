@@ -1,74 +1,91 @@
-# DEMO.md — Etap II u CEO (6 minut)
+# DEMO.md — Etap III u CEO (6 minut)
 
-Firma **Konduktor**, wariant: pociąg. Etap II: płatność kartą przez Stripe Checkout (tryb testowy). Prowadzi lider (Mateusz).
+Firma **Konduktor**, wariant: pociąg. Etap III: program lojalnościowy. Klient zbiera punkty w Voucherify (1000 na start, 10 pkt za każdy pełny złoty zapłacony kartą), płaci nimi do połowy ceny (1 pkt = 1 grosz), a po zakupie dostaje mail z biletem przez Resend. Prowadzi lider (Mateusz).
+
+Scenariusz Etapu II (płatność kartą, odmowa, 3D Secure, spóźniona płatność): `git show 6865e21:DEMO.md`. Wszystko z niego działa dalej.
 
 ## Przed demem (10 minut wcześniej)
 
-- [ ] Vercel: `RESERVATION_TTL_SECONDS=120`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `APP_URL` ustawione, zrobiony redeploy.
-- [ ] `MONGODB_DB=pociag npm run reset -- --yes --prod` — czyste miejsca (nikt nie płaci w tym momencie).
-- [ ] Otwarte karty: rozkład jazdy (`/`), ten sam kurs na mapie w drugiej karcie, Stripe Dashboard (sandbox) → Payments, terminal z `attack.mjs`.
-- [ ] Karty testowe pod ręką: `4242 4242 4242 4242`, `4000 0000 0000 0002`, `4000 0025 0000 3155` (data dowolna przyszła, CVC dowolne).
+- [ ] Vercel: zmienne z DEPLOY.md §3 (w tym Voucherify, Resend, `CRON_SECRET`), `RESERVATION_TTL_SECONDS=120`, zrobiony redeploy.
+- [ ] Zaległe zwroty punktów: `curl -H "Authorization: Bearer $CRON_SECRET" https://<adres>.vercel.app/api/cron/settle`, potem `MONGODB_DB=pociag npm run reset -- --yes --prod` (nikt nie płaci w tym momencie).
+- [ ] **Nie puszczaj ataku z punktami w godzinie przed demem** — sandbox Voucherify ma 100 wywołań na godzinę na cały projekt, a CEO też będzie z niego korzystał.
+- [ ] Otwarte karty: rozkład jazdy (`/`), Stripe Dashboard → Payments, Voucherify → Loyalty Hub → Members, Resend → Emails, terminal z `attack.mjs`.
+- [ ] Przygotowane e-maile klientów (każdy nowy ma 1000 pkt): `delivered+demo1@resend.dev`, `delivered+demo2@resend.dev`, `bounced+demo@resend.dev`.
+- [ ] Przygotowany wcześniej przypadek „spóźniona płatność z punktami” (punkt 3), żeby nie czekać 2 minut na żywo.
 
 ## Scenariusz
 
-**1. Klient płaci kartą i dostaje bilet (≈ 2 min)**
-1. `/`: rozkład jazdy z cenami (89 / 129 / 59 zł). Klik w kurs: mapa wagonu z ceną miejsca.
-2. Klik w wolne miejsce: formularz z „Cena miejsca: 89,00 zł”. „Rezerwuję miejsce” → licznik 2:00 i przycisk **„Zapłać 89,00 zł”**.
-3. W drugiej karcie mapa: to miejsce jest już szare.
-4. „Zapłać” → strona Stripe z nazwą kursu, „Wagon 1, miejsce 5 · …” i kwotą z naszej bazy. Karta `4242…` → „Zapłać”.
-5. Powrót: „Płatność w toku…” → po chwili sam bilet z kodem i „Zapłacono 89,00 zł”.
-6. Stripe Dashboard → Payments: płatność 89,00 zł; Developers → Webhooks: `checkout.session.completed` → 200.
+**1. Klient płaci punktami i dostaje bilet mailem (≈ 2,5 min)**
+1. Rozkład → kurs IC 1500 → miejsce → formularz. Wpisz `delivered+demo1@resend.dev`: pod polem „Masz 1000 pkt (10,00 zł)…”.
+2. „Rezerwuję miejsce” → licznik i pole **„Użyj punktów”** z podpowiedzią „Najwięcej: 1000 pkt”. „Użyj wszystkich” → przycisk od razu zmienia się na **„Zapłać 79,00 zł”**.
+3. Pokaż walidację: wpisz 5000 → „Najwięcej możesz użyć 1000 pkt.” i zablokowany przycisk. Wróć do 1000.
+4. „Zapłać” → strona Stripe na **79,00 zł** z dopiskiem „punkty: −10,00 zł”. Karta `4242…`.
+5. Bilet z podsumowaniem: **kartą 79,00 zł · punktami 1000 pkt (10,00 zł) · zebrane punkty +790** i „Wysyłamy bilet także na Twój e-mail”.
+6. Resend → Emails: mail „Bilet XXXX-XXXX — IC 1500 …” (Delivered). Voucherify → Members: karta klienta z saldem 790 (+1000, −1000, +790).
+7. Nowa rezerwacja tym samym e-mailem: formularz pokazuje „Masz 790 pkt”.
 
-**2. Odmowa, przerwanie i ponowna płatność (≈ 1,5 min)**
-1. Nowa rezerwacja → „Zapłać” → karta `4000 0000 0000 0002` → Stripe: „Karta została odrzucona”. U nas rezerwacja dalej czeka.
-2. Strzałka „wróć” na stronie Stripe → „Płatność przerwana. Nic nie pobraliśmy” + licznik + **„Zapłać ponownie”** → ta sama strona Stripe.
-3. Karta `4000 0025 0000 3155` → okno 3D Secure → Complete → bilet.
+**2. Zakup bez punktów (≈ 45 s)**
+`delivered+demo2@resend.dev`, bez punktów → „Zapłać 89,00 zł” → bilet „kartą 89,00 zł · +890 pkt” → saldo 1890. Punkty liczymy tylko od części zapłaconej kartą, od pełnych złotych.
 
-**3. Spóźniona płatność (≈ 30 s opowieści + wynik przygotowany wcześniej)**
-Otwieram stronę Stripe, czekam ponad 2 minuty i płacę: rezerwacja już wygasła, więc biletu nie ma, a Stripe Dashboard pokazuje automatyczny zwrot. (Przygotuj to przed demem, żeby nie czekać na żywo.)
+**3. Spóźniona płatność z punktami (≈ 30 s opowieści + wynik przygotowany wcześniej)**
+Otworzyłem stronę Stripe z punktami, czekałem ponad 2 minuty i zapłaciłem. Rezerwacja już wygasła, więc biletu nie ma, Stripe Dashboard pokazuje automatyczny zwrot pieniędzy, a punkty wróciły na kartę w Voucherify.
 
 **4. Sam atakuję system (≈ 1,5 min)**
 ```bash
 node scripts/attack.mjs https://<adres>.vercel.app
 ```
-Na żywo: kryteria A1–C4 po kolei — identyczna rezerwacja wysłana dwa razy daje tę samą (B1), 20 naraz na jedno miejsce daje 1×201 (B2), 100 rezerwacji w 10 s z jednego klienta daje 429 z `Retry-After` (B5), 5 równoległych „Zapłać” daje jeden adres płatności (C1), webhook bez podpisu daje 400. Na końcu `N/N PASS`.
+Na żywo, obok kryteriów etapów I i II:
+- `GET /api/loyalty` nowego e-maila daje 1000 i tylko `{ email, points }`,
+- złe `points` (tekst, ułamek, ujemne) dają 400, ponad połowę ceny `POINTS_OVER_LIMIT`, a ponad saldo `INSUFFICIENT_POINTS`,
+- 5 równoległych „Zapłać” z 1000 pkt daje jeden adres płatności i jedno pobranie punktów,
+- inna liczba punktów po pierwszym „Zapłać” daje `POINTS_LOCKED`,
+- na końcu `N/N PASS` i szacunek wywołań Voucherify.
 
-**5. Lista zagrożeń (≈ 1 min)**: tabela niżej, nowe Z22–Z35.
+**5. Lista zagrożeń (≈ 1 min)**: tabela niżej, Z36–Z55.
 
-## Jak obroniliśmy zagrożenia Etapu II (CONTRACT.md §7)
+## Jak obroniliśmy zagrożenia Etapu III (CONTRACT.md §7)
 
 | # | Zagrożenie | Obrona w jednym zdaniu |
 |---|---|---|
-| Z22 | Ta sama rezerwacja wysłana dwa razy (B1) | Identyczne żądanie tej samej osoby na zajęte przez nią miejsce zwraca tę samą rezerwację (200), inna osoba dostaje 409. |
-| Z23 | Jeden klient zalewa API (B5) | 40 żądań / 10 s na IP, liczniki w MongoDB (działa na wielu instancjach Vercela), po limicie 429 z `Retry-After`; inni klienci nie odczuwają. |
-| Z24 | Płatność po wygaśnięciu rezerwacji | Webhook nie wystawia biletu i automatycznie zwraca pieniądze. |
-| Z25 | Płatność X w chwili, gdy Y rezerwuje to samo miejsce (C2) | Przyjęcie płatności to jedno atomowe przejście, które działa tylko, jeśli rezerwacja X nadal trzyma miejsce — zawsze jeden właściciel, przegrany dostaje zwrot. |
-| Z26 | Dwie płatności za jedną rezerwację | Jedna sesja Stripe na rezerwację (klucz idempotencji); gdyby jednak przyszła druga płatność — zwrot. |
-| Z27 | Sfałszowany webhook „zapłacone” | Podpis Stripe sprawdzamy na surowym body; bez poprawnego podpisu 400 i nic się nie zmienia. |
-| Z28 | Stripe wysyła ten sam webhook kilka razy | Log zdarzeń i atomowe przejścia: powtórka niczego nie zmienia, kod biletu zostaje ten sam. |
-| Z29 | Podmieniona kwota albo zmiana ceny po rezerwacji | Kwota zawsze z rezerwacji zapisanej w bazie, nigdy od klienta; webhook sprawdza kwotę i walutę, zła → zwrot. |
-| Z30 | Ktoś wchodzi na stronę „sukcesu” bez płacenia | Bilet pokazujemy tylko, gdy w bazie jest `paid`, nigdy na podstawie adresu. |
-| Z31 | Webhook się spóźnia albo nie dochodzi | Strona powrotu odpytuje serwer co 2 s, a serwer sam pyta Stripe o sesję i przyjmuje opłaconą. |
-| Z32 | Klucze Stripe w repo albo w przeglądarce | Klucze tylko w zmiennych środowiskowych serwera; serwer odrzuca każdy klucz inny niż `sk_test_`. |
-| Z33 | Przekierowanie po płatności na obcą domenę | Adresy powrotu budujemy z `APP_URL`, nigdy z nagłówka `Host`. |
-| Z34 | Stripe niedostępny | 503 z komunikatem „Płatności chwilowo nie działają”, rezerwacja nietknięta, „Zapłać” można ponowić. |
-| Z35 | Karta odrzucona albo 3D Secure | Obsługuje strona Stripe; klient może wrócić i zapłacić ponownie tą samą sesją, dopóki rezerwacja jest ważna. |
+| Z36 | Ten sam klient wydaje punkty naraz na dwie rezerwacje | Blokada wydawania na e-mail i świeże saldo z Voucherify tuż przed pobraniem, a portfel w Voucherify nie pozwala zejść poniżej zera. |
+| Z37 | Złe `points` (tekst, ułamek, ujemne, ponad połowę ceny) | Walidacja → 400, Voucherify nawet nie jest wołany. |
+| Z38 | Podwójne „Zapłać” z punktami | Atomowe zajęcie pobrania w rezerwacji: punkty schodzą raz, wszyscy dostają ten sam adres płatności. |
+| Z39 | Punkty pobrane, a klient nie zapłacił | Po wygaśnięciu punkty wracają na kartę — przy odczycie rezerwacji, salda, i raz dziennie w cronie. |
+| Z40 | Płatność kartą po wygaśnięciu rezerwacji z punktami | Zwrot punktów zamyka rezerwację, więc spóźniona płatność dostaje zwrot pieniędzy, a nie bilet za darmo. |
+| Z41 | Punkty za zakup naliczone dwa razy | Naliczenie zajmuje jeden wykonawca, a każda operacja ma unikalny opis sprawdzany przed ponowieniem. |
+| Z42 | Punkty liczone od całej ceny albo od groszy | Jeden wzór dla wszystkich: `floor(kwota kartą / 100) × 10`. |
+| Z43 | Voucherify nie działa albo limit 100/h | Płatność bez punktów działa jak w Etapie II, z punktami „Punkty chwilowo nie działają”, naliczenia i zwroty czekają na ponowienie. |
+| Z44 | Timeout przy pobraniu — nie wiadomo, czy punkty zeszły | Sprawdzamy historię transakcji karty po naszym opisie operacji, zanim spróbujemy drugi raz. |
+| Z45 | Zmiana liczby punktów po otwarciu strony Stripe | Punkty są zablokowane po pierwszym „Zapłać” (`409 POINTS_LOCKED`), a webhook sprawdza, że kwota to cena minus punkty. |
+| Z46 | Mail z biletem wysłany dwa razy | Atomowe zajęcie wysyłki i klucz idempotencji `ticket-<id>` w Resend. |
+| Z47 | Mail nie dochodzi (Resend nie działa, adres odrzucony) | Bilet działa bez maila; mail ponawiamy do 5 razy, odrzucony adres oznaczamy jako nieudany. |
+| Z48 | HTML albo link wstrzyknięty w imieniu do maila | Wszystkie dane klienta w mailu są escapowane. |
+| Z49 | Podgląd salda cudzego e-maila | Wymóg PDF; odpowiedź ma tylko `email` i `points`, z limitem ruchu. |
+| Z50 | Klucze Voucherify/Resend w repo albo w przeglądarce | Tylko zmienne środowiskowe serwera; treść błędów usług tylko w logach. |
+| Z51 | 1000 punktów powitalnych dodane dwa razy | Atomowe „zakładanie karty” w bazie; powitalne dokładnie raz na e-mail. |
+| Z52 | `Jan@Example.com` i `jan@example.com` jako dwa konta | E-mail zawsze po `trim` i małymi literami. |
+| Z53 | Kwota z body checkoutu (`{ "amount": 100 }`) | Z body liczy się tylko `points`, kwota zawsze z bazy. |
+| Z54 | Operacja przerwana w połowie (padła funkcja na Vercelu) | Kroki zawieszone dłużej niż 2 minuty przejmuje następny odczyt albo cron, po sprawdzeniu transakcji. |
+| Z55 | Voucherify przyjął pobranie, ale je odrzucił albo jeszcze przetwarza | Sesja Stripe ze zniżką dopiero po zatwierdzeniu (`APPROVED`); odrzucone → „za mało punktów”. |
 
-Z1–Z21 z Etapu I działają dalej (zakup = teraz płatność) — tabela w historii repo (`git show 06953ef:DEMO.md`).
+Z1–Z21 (Etap I) i Z22–Z35 (Etap II) działają dalej — tabela Etapu II: `git show 6865e21:DEMO.md`.
 
 ## Pytania, które mogą paść
 
-**„Dlaczego bilet wystawia webhook, a nie strona powrotu?”**
-Na stronę powrotu da się wejść bez płacenia — to zwykły adres. Webhook przychodzi bezpośrednio od Stripe i jest podpisany, więc tylko on (albo nasze zapytanie do Stripe o sesję) może potwierdzić płatność.
+**„Dlaczego punkty schodzą już przy »Zapłać«, a nie po płatności?”**
+Tak opisuje to karta B. Sesja Stripe jest na kwotę po odjęciu punktów, więc punkty muszą zejść wcześniej — inaczej klient mógłby zapłacić mniej, a punkty wydać jeszcze raz gdzie indziej.
 
-**„Co, jeśli klient zapłaci dwa razy?”**
-Każde „Zapłać” dla tej samej rezerwacji otwiera tę samą sesję Stripe, więc druga płatność praktycznie nie jest możliwa. Gdyby jednak przyszła, webhook widzi, że rezerwacja jest już opłacona, i zwraca pieniądze.
+**„A jeśli klient nie zapłaci?”**
+Punkty wracają na kartę 30 s po wygaśnięciu rezerwacji. Zwrot zamyka rezerwację, więc spóźniona płatność dostaje zwrot pieniędzy, a nie bilet.
 
-**„Gdzie są klucze Stripe?”**
-Tylko w zmiennych środowiskowych na Vercelu i w lokalnych `.env.local` (w `.gitignore`). Nigdy w repo ani w przeglądarce. Serwer odmawia pracy z kluczem produkcyjnym `sk_live_`.
+**„Co, jeśli Voucherify padnie?”**
+Zakup bez punktów w ogóle go nie woła, więc działa jak w Etapie II. Z punktami klient widzi „Punkty chwilowo nie działają” i może zapłacić bez nich. Naliczenia po zakupie czekają i dochodzą przy kolejnym odczycie albo w cronie.
 
-**„Skąd wiecie, że nie da się podmienić kwoty?”**
-Klient nie wysyła kwoty w ogóle. Cena jest zapisywana w rezerwacji w chwili rezerwacji, z niej tworzymy sesję Stripe, a webhook porównuje zapłaconą kwotę z rezerwacją.
+**„Skąd pewność, że mail nie przyjdzie dwa razy?”**
+Wysyłkę zajmuje atomowo jeden proces, a Resend dostaje klucz idempotencji `ticket-<reservationId>` — drugi taki sam request przez 24 h niczego nie wysyła.
 
-**„Co z kryteriami z Etapu I?”**
-Naprawiliśmy B1 (identyczna rezerwacja → ta sama, wcześniej 409) i B5 (limit ruchu, wcześniej brak). Reszta była zaliczona i dalej przechodzi w `attack.mjs`.
+**„Skąd wiecie, ile macie punktów? Trzymacie saldo u siebie?”**
+Nie — źródłem prawdy jest Voucherify. U siebie pamiętamy tylko, ile punktów rezerwacja użyła i zebrała, mapę e-mail → karta i krótką pamięć podręczną salda, żeby zmieścić się w limicie 100 wywołań na godzinę.
+
+**„PDF mówi o /v1/loyalties/members/…/balance, a wy?”**
+Nowe konta Voucherify mają już tylko Loyalty Hub v2 i dwóch modeli nie da się mieszać. Odpowiednikiem jest `POST /v2/…/cards/{cardId}/points`; zasady (punkty dodatnie dodają, ujemne odejmują) są te same.
