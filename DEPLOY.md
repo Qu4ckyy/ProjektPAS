@@ -125,15 +125,20 @@ Klient: `delivered+demo<N>@resend.dev` (nowy adres na każdą próbę — 1000 p
 
 | Krok | Oczekiwane | Wynik |
 |---|---|---|
-| `/reserve` → wpisz e-mail | pod polem „Masz 1000 pkt (10,00 zł)…” | do zrobienia |
-| Rezerwacja IC 1500 → „Użyj wszystkich” | pole 1000, przycisk „Zapłać 79,00 zł” | do zrobienia |
-| „Zapłać” → `4242…` | strona Stripe 79,00 zł z „punkty: −10,00 zł” → bilet z podsumowaniem „kartą 79,00 zł · punktami 1000 pkt · +790 pkt” | do zrobienia |
-| Resend → Emails | jeden mail „Bilet XXXX-XXXX — IC 1500 …”, status Delivered | do zrobienia |
-| Ponownie `/reserve` tym samym e-mailem | „Masz 790 pkt (7,90 zł)”; w Voucherify (Loyalty Hub → Members) karta z 790 | do zrobienia |
-| Zakup bez punktów (nowy e-mail) | bilet „kartą 89,00 zł · +890 pkt”, saldo 1890 | do zrobienia |
+| `/reserve` → wpisz e-mail | pod polem „Masz 1000 pkt (10,00 zł)…” | ✅ |
+| Rezerwacja IC 1500 → „Użyj wszystkich” | pole 1000, przycisk „Zapłać 79,00 zł” | ✅ |
+| „Zapłać” → `4242…` | strona Stripe 79,00 zł z „punkty: −10,00 zł” → bilet z podsumowaniem „kartą 79,00 zł · punktami 1000 pkt · +790 pkt” | ✅ bilet `XEAB-2P5R`: pobrane 1000, kartą 7900, naliczone 790; webhook 200 |
+| Resend → Emails | jeden mail „Bilet XXXX-XXXX — IC 1500 …”, status Delivered | ✅ wysłany raz (`ticketEmail: sent`); status Delivered — potwierdzić w panelu |
+| Ponownie `/reserve` tym samym e-mailem | „Masz 790 pkt (7,90 zł)”; w Voucherify (Loyalty Hub → Members) karta z 790 | ✅ w Voucherify saldo 790 (dodane 1790, odjęte 1000) |
+| Zakup bez punktów (nowy e-mail) | bilet „kartą 89,00 zł · +890 pkt”, saldo 1890 | ✅ bilet `XV74-JQPC`, saldo 1890 (mail „failed”: wtedy brakowało `RESEND_API_KEY` na Vercelu) |
 | Spóźniona płatność z punktami (otwórz Stripe, czekaj > 2 min, zapłać) | bez biletu, zwrot w Stripe, punkty wracają (saldo znów 1000) | do zrobienia |
 | `bounced+demo@resend.dev` | bilet jest; w Resend status Bounced | do zrobienia |
 | `stripe trigger checkout.session.completed` (Stripe CLI, konto sandbox) | webhook 200 w Stripe → Webhooks, nic się nie zmienia (II.B2) | do zrobienia |
+
+Test ręczny 26 listopada 2026. Wyszły przy nim dwa błędy konfiguracji, oba poprawione:
+- **Endpoint webhooka w Stripe wskazywał stronę główną** (`https://projekt-pas.vercel.app/`), a nie `/api/webhooks/stripe`. Stripe dostawał 200 od strony głównej i pokazywał 0% błędów, ale żadne zdarzenie nie trafiało do naszego kodu; bilety powstawały tylko przez dopytanie Stripe ze strony sukcesu. Po poprawce: ponowne wysłanie zdarzenia z panelu (II.B1) → 200, ten sam bilet, a nowa płatność → webhook 200.
+- **Na Vercelu brakowało `RESEND_API_KEY`** → mail „failed”, bilet działał (D19).
+- Zostaje: spóźniona płatność z punktami, `bounced+demo@`, `stripe trigger` (II.B2).
 
 ## 7. Kontrakt CEO — curl-e do skopiowania
 
